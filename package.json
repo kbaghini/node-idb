@@ -1,0 +1,60 @@
+{
+  "name": "node-idb",
+  "version": "0.1.0",
+  "description": "A transactional SQLite document store for Node.js with typed values, SQL-style queries, deterministic aliases, and legacy IDB compatibility.",
+  "type": "module",
+  "main": "./src/index.js",
+  "module": "./src/index.js",
+  "types": "./src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.d.ts",
+      "import": "./src/index.js",
+      "default": "./src/index.js"
+    }
+  },
+  "files": [
+    "src",
+    "examples",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "test": "node --test",
+    "pack:check": "npm pack --dry-run"
+  },
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "keywords": [
+    "sqlite",
+    "sqlite3",
+    "database",
+    "document-store",
+    "document-database",
+    "nosql",
+    "nodejs",
+    "typed-storage",
+    "json-database",
+    "embedded-database",
+    "transactions",
+    "upsert",
+    "query-builder",
+    "idb"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kbaghini/node-idb.git"
+  },
+  "bugs": {
+    "url": "https://github.com/kbaghini/node-idb/issues"
+  },
+  "homepage": "https://github.com/kbaghini/node-idb#readme",
+  "license": "MIT",
+  "author": "Kamran Baghini",
+  "dependencies": {
+    "sqlite-parser": "^1.0.1",
+    "sqlite3": "^6.0.1"
+  }
+}
