@@ -1,5 +1,10 @@
 # node-idb
 
+[![npm version](https://img.shields.io/npm/v/node-idb.svg)](https://www.npmjs.com/package/node-idb)
+[![CI](https://github.com/kbaghini/node-idb/actions/workflows/ci.yml/badge.svg)](https://github.com/kbaghini/node-idb/actions/workflows/ci.yml)
+[![Node.js](https://img.shields.io/node/v/node-idb.svg)](https://www.npmjs.com/package/node-idb)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 `node-idb` is an embedded, server-side document store for Node.js built on
 SQLite. It stores JavaScript-shaped documents locally, preserves useful native
 types, and provides a compact document API with a practical SQL-style query
@@ -18,19 +23,19 @@ shared across many application servers or written heavily by many processes.
 
 ## Executive summary
 
-| Question | Answer |
-| --- | --- |
-| What is it? | A typed document layer over embedded SQLite. |
-| Where does it run? | In a Node.js server process, on the same machine as its database files. |
-| What does it store? | Plain objects, nested objects, atomic arrays, strings, finite numbers, booleans, `null`, `BigInt`, `Date`, and binary data. |
-| How is it queried? | `GET`, `FIND`, `COLLECT`, document mutations, and a supported SQL-style `SELECT` subset. |
-| Is it transactional? | Yes. Each mutation is atomic, including values split between the main and blob databases. |
-| Is it serverless? | Yes in the database sense: no database daemon is required. Your Node.js application remains the server for remote clients. |
-| What is the best workload? | Local application data, caches, catalogs, configuration, metadata, offline-capable services, and low-to-medium traffic single-host applications. |
-| What is the main scaling boundary? | SQLite serializes writers to each collection database, and `node-idb` creates storage structures for every distinct field path. |
-| What document size is preferred? | Usually below 100 KB. Documents up to about 1 MB can be reasonable when measured on the target system. Larger documents require deliberate testing. |
-| Is there a hard document-size setting? | No single `node-idb` document limit. SQLite, Node.js memory, value encoding, disk capacity, and transaction duration impose the real limits. |
-| How mature is it? | It is a young `0.x` package with a comprehensive automated test suite, but it should be evaluated and load-tested before critical production use. |
+| Question                               | Answer                                                                                                                                              |
+| -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| What is it?                            | A typed document layer over embedded SQLite.                                                                                                        |
+| Where does it run?                     | In a Node.js server process, on the same machine as its database files.                                                                             |
+| What does it store?                    | Plain objects, nested objects, atomic arrays, strings, finite numbers, booleans, `null`, `BigInt`, `Date`, and binary data.                         |
+| How is it queried?                     | `GET`, `FIND`, `COLLECT`, document mutations, and a supported SQL-style `SELECT` subset.                                                            |
+| Is it transactional?                   | Yes. Each mutation is atomic, including values split between the main and blob databases.                                                           |
+| Is it serverless?                      | Yes in the database sense: no database daemon is required. Your Node.js application remains the server for remote clients.                          |
+| What is the best workload?             | Local application data, caches, catalogs, configuration, metadata, offline-capable services, and low-to-medium traffic single-host applications.    |
+| What is the main scaling boundary?     | SQLite serializes writers to each collection database, and `node-idb` creates storage structures for every distinct field path.                     |
+| What document size is preferred?       | Usually below 100 KB. Documents up to about 1 MB can be reasonable when measured on the target system. Larger documents require deliberate testing. |
+| Is there a hard document-size setting? | No single `node-idb` document limit. SQLite, Node.js memory, value encoding, disk capacity, and transaction duration impose the real limits.        |
+| How mature is it?                      | It is a young `0.x` package with a comprehensive automated test suite, but it should be evaluated and load-tested before critical production use.   |
 
 ## Who should use it?
 
@@ -54,16 +59,16 @@ We recommend `node-idb` when most of these statements are true:
 
 Typical good fits include:
 
-| Use case | Why it fits |
-| --- | --- |
-| Desktop or local-first application backend | Data stays beside the application and needs no administrator. |
-| Embedded device or edge service | SQLite is self-contained and works without a database daemon. |
-| Small-to-medium single-server API | The application server serializes short writes and serves remote clients through its own API. |
-| Metadata or content catalog | Documents are easy to model and scalar fields remain queryable. |
-| Configuration, templates, and application resources | Typed nested data and transactional replacement are useful. |
-| Local cache of a remote system | Low latency, offline reads, and simple invalidation/replacement. |
-| Tests, prototypes, and development tools | Isolated storage paths and `mem:<name>` collections are convenient. |
-| Migration from the original HIS/EV3 IDB module | Legacy v0/v2 files and callback behavior are supported. |
+| Use case                                            | Why it fits                                                                                   |
+| --------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| Desktop or local-first application backend          | Data stays beside the application and needs no administrator.                                 |
+| Embedded device or edge service                     | SQLite is self-contained and works without a database daemon.                                 |
+| Small-to-medium single-server API                   | The application server serializes short writes and serves remote clients through its own API. |
+| Metadata or content catalog                         | Documents are easy to model and scalar fields remain queryable.                               |
+| Configuration, templates, and application resources | Typed nested data and transactional replacement are useful.                                   |
+| Local cache of a remote system                      | Low latency, offline reads, and simple invalidation/replacement.                              |
+| Tests, prototypes, and development tools            | Isolated storage paths and `mem:<name>` collections are convenient.                           |
+| Migration from the original HIS/EV3 IDB module      | Legacy v0/v2 files and callback behavior are supported.                                       |
 
 ## Who should not use it?
 
@@ -161,15 +166,15 @@ performance guarantees**. Hardware, filesystem, cache behavior, query patterns,
 write frequency, and Node.js memory settings matter. Benchmark representative
 data on the target system before committing to a design.
 
-| Area | Preferred starting point | Caution zone | Usually choose another representation |
-| --- | --- | --- | --- |
-| Complete document | Up to roughly 100 KB | 100 KB to 1 MB; measure reads and rewrites | Regularly above 1 MB, especially write-heavy documents |
-| One text or binary property | Up to roughly 100 KB | Hundreds of KB to a few MB | Large media, archives, backups, or stream-oriented files |
-| Leaf/path count per document | Tens; preferably below 100 | Low hundreds; benchmark write and open time | Many hundreds or thousands of distinct paths |
-| Distinct field paths across a collection | Stable and shared by documents | Growing into the hundreds | Unbounded keys unique to each document |
-| Atomic array | Small or moderate bounded lists | Large arrays read or replaced as a unit | Arrays whose elements need queries, indexes, or partial updates |
-| Insert batch | Small bounded chunks | Hundreds of small documents per call | Huge batches that create long write locks or high memory pressure |
-| Collection database | Comfortably fits local disk and backup windows | Multi-GB stores should be load- and recovery-tested | Data that must span machines or approach local operational limits |
+| Area                                     | Preferred starting point                       | Caution zone                                        | Usually choose another representation                             |
+| ---------------------------------------- | ---------------------------------------------- | --------------------------------------------------- | ----------------------------------------------------------------- |
+| Complete document                        | Up to roughly 100 KB                           | 100 KB to 1 MB; measure reads and rewrites          | Regularly above 1 MB, especially write-heavy documents            |
+| One text or binary property              | Up to roughly 100 KB                           | Hundreds of KB to a few MB                          | Large media, archives, backups, or stream-oriented files          |
+| Leaf/path count per document             | Tens; preferably below 100                     | Low hundreds; benchmark write and open time         | Many hundreds or thousands of distinct paths                      |
+| Distinct field paths across a collection | Stable and shared by documents                 | Growing into the hundreds                           | Unbounded keys unique to each document                            |
+| Atomic array                             | Small or moderate bounded lists                | Large arrays read or replaced as a unit             | Arrays whose elements need queries, indexes, or partial updates   |
+| Insert batch                             | Small bounded chunks                           | Hundreds of small documents per call                | Huge batches that create long write locks or high memory pressure |
+| Collection database                      | Comfortably fits local disk and backup windows | Multi-GB stores should be load- and recovery-tested | Data that must span machines or approach local operational limits |
 
 ### Why 100 KB is a useful starting point
 
@@ -227,20 +232,20 @@ might otherwise become property names.
 
 `node-idb` applies these explicit limits:
 
-| Limit | Current behavior |
-| --- | --- |
-| Project name | 1–128 characters after an optional `mem:` prefix |
-| Collection name | 1–128 characters |
-| Storage-name characters | Letters, numbers, underscores, and hyphens; at least one letter, number, or underscore |
-| Document/array nesting | Maximum 128 levels |
-| Field-name dots | Rejected because `.` separates nested paths |
-| Field-name null bytes | Rejected |
-| Prototype-sensitive field names | `__proto__`, `prototype`, and `constructor` are rejected |
-| Numbers | Must be finite JavaScript numbers; use `BigInt` for larger exact integers |
-| Dates | Must contain a valid timestamp |
-| Object types | Only plain objects or objects with a `null` prototype are accepted |
-| Circular references | Rejected |
-| Write lock wait | SQLite busy timeout is 10 seconds per collection connection |
+| Limit                           | Current behavior                                                                       |
+| ------------------------------- | -------------------------------------------------------------------------------------- |
+| Project name                    | 1–128 characters after an optional `mem:` prefix                                       |
+| Collection name                 | 1–128 characters                                                                       |
+| Storage-name characters         | Letters, numbers, underscores, and hyphens; at least one letter, number, or underscore |
+| Document/array nesting          | Maximum 128 levels                                                                     |
+| Field-name dots                 | Rejected because `.` separates nested paths                                            |
+| Field-name null bytes           | Rejected                                                                               |
+| Prototype-sensitive field names | `__proto__`, `prototype`, and `constructor` are rejected                               |
+| Numbers                         | Must be finite JavaScript numbers; use `BigInt` for larger exact integers              |
+| Dates                           | Must contain a valid timestamp                                                         |
+| Object types                    | Only plain objects or objects with a `null` prototype are accepted                     |
+| Circular references             | Rejected                                                                               |
+| Write lock wait                 | SQLite busy timeout is 10 seconds per collection connection                            |
 
 There is no separate `node-idb` maximum for the length of an ordinary field
 name or for the number of properties in one document. Those values are bounded
@@ -253,14 +258,14 @@ limit is enforced.
 SQLite supplies additional upper bounds. `node-idb` does not promise that
 values close to these theoretical maxima are practical:
 
-| SQLite boundary | Typical/current build value | Effect on `node-idb` |
-| --- | --- | --- |
-| One string, BLOB, or encoded SQLite row | 1,000,000,000 bytes | A single long text, binary value, or serialized array must remain below the active SQLite length limit and fit process memory. |
-| Result columns / selected terms | 2,000 | Extremely wide flat `SELECT` projections can hit the SQLite column limit. Document reconstruction is internally chunked and is not equivalent to one column per property. |
-| Bound SQL variables | 32,766 | Extremely large application-supplied parameter lists, especially `IN (...)`, can hit the build's variable limit. |
-| Compound `SELECT` terms | 500 | Very complex generated or raw diagnostic reads can hit this boundary. |
-| Expression depth | 1,000 | Deeply nested SQL expressions can fail even when document nesting is valid. |
-| Pages per database file | 4,294,967,294 | With a 4 KiB page size this is about 17.6 TB per SQLite file; filesystem and operational limits normally arrive much earlier. |
+| SQLite boundary                         | Typical/current build value | Effect on `node-idb`                                                                                                                                                      |
+| --------------------------------------- | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| One string, BLOB, or encoded SQLite row | 1,000,000,000 bytes         | A single long text, binary value, or serialized array must remain below the active SQLite length limit and fit process memory.                                            |
+| Result columns / selected terms         | 2,000                       | Extremely wide flat `SELECT` projections can hit the SQLite column limit. Document reconstruction is internally chunked and is not equivalent to one column per property. |
+| Bound SQL variables                     | 32,766                      | Extremely large application-supplied parameter lists, especially `IN (...)`, can hit the build's variable limit.                                                          |
+| Compound `SELECT` terms                 | 500                         | Very complex generated or raw diagnostic reads can hit this boundary.                                                                                                     |
+| Expression depth                        | 1,000                       | Deeply nested SQL expressions can fail even when document nesting is valid.                                                                                               |
+| Pages per database file                 | 4,294,967,294               | With a 4 KiB page size this is about 17.6 TB per SQLite file; filesystem and operational limits normally arrive much earlier.                                             |
 
 These values depend on the SQLite build delivered by the installed `sqlite3`
 dependency and may change. SQLite documents its defaults and compile-time
@@ -352,25 +357,25 @@ Node.js 20.19 or newer is required. The package is ESM.
 ## Quick start
 
 ```js
-import { createIdb } from 'node-idb'
+import { createIdb } from "node-idb";
 
-const database = createIdb({ storagePath: './data/idbs' })
+const database = createIdb({ storagePath: "./data/idbs" });
 
-const objectId = await database.execute('portal', 'INSERT INTO users', {
-  email: 'user@example.test',
-  profile: { name: 'Example User', theme: 'dark' },
+const objectId = await database.execute("portal", "INSERT INTO users", {
+  email: "user@example.test",
+  profile: { name: "Example User", theme: "dark" },
   active: true,
   createdAt: new Date(),
-})
+});
 
 const users = await database.execute(
-  'portal',
-  'GET users WHERE active = ? ORDER BY createdAt DESC LIMIT 20',
+  "portal",
+  "GET users WHERE active = ? ORDER BY createdAt DESC LIMIT 20",
   [true],
-)
+);
 
-console.log(objectId, users)
-await database.close()
+console.log(objectId, users);
+await database.close();
 ```
 
 ## Examples
@@ -393,16 +398,16 @@ See [examples/README.md](examples/README.md) for the complete guide.
 ## Public API
 
 ```js
-import idb, { createIdb } from 'node-idb'
+import idb, { createIdb } from "node-idb";
 
 // The default instance stores files below <process.cwd()>/idbs.
-const objectId = await idb.execute('portal', 'INSERT INTO files', {
-  key: 'main.js',
-  content: Buffer.from('export default true'),
-})
+const objectId = await idb.execute("portal", "INSERT INTO files", {
+  key: "main.js",
+  content: Buffer.from("export default true"),
+});
 
 // Isolated instance, useful for another deployment or tests.
-const database = createIdb({ storagePath: 'D:/data/idbs' })
+const database = createIdb({ storagePath: "D:/data/idbs" });
 ```
 
 The default instance uses `<process.cwd()>/idbs`. For most applications,
@@ -414,11 +419,9 @@ can use isolated temporary directories.
 Returns the direct operation result and rejects on an error.
 
 ```js
-const files = await database.execute(
-  'portal',
-  'GET files WHERE key = $key',
-  { $key: 'main.js' },
-)
+const files = await database.execute("portal", "GET files WHERE key = $key", {
+  $key: "main.js",
+});
 ```
 
 ### `run(project, statement, parameters?, callback?)`
@@ -427,11 +430,16 @@ Preserves both current and legacy behavior. It always resolves an envelope and
 also accepts either Node-style callback overload:
 
 ```js
-const outcome = await database.run('portal', 'GET files')
+const outcome = await database.run("portal", "GET files");
 // { error: null, result: [...] } or { error, result: undefined }
 
-database.run('portal', 'GET files', (error, result) => {})
-database.run('portal', 'GET files WHERE key=?', ['main.js'], (error, result) => {})
+database.run("portal", "GET files", (error, result) => {});
+database.run(
+  "portal",
+  "GET files WHERE key=?",
+  ["main.js"],
+  (error, result) => {},
+);
 ```
 
 ### `close(project?)`
@@ -441,20 +449,20 @@ whole engine. A later operation lazily reopens persisted data.
 
 ## Statements and results
 
-| Statement | Behavior | Result |
-| --- | --- | --- |
-| `INSERT [INTO] collection` | Inserts one payload, or a batch when the payload is an array | object ID, or an array of IDs |
-| `GET collection ...` | Reconstructs complete typed documents | document array |
-| `FIND collection ...` | Alias of `GET` | document array |
-| `COLLECT collection ...` | Alias of `GET` | document array |
-| `SELECT ... FROM collection ...` | Runs a flat SQLite-style projection | row array |
-| `UPDATE collection ...` + payload | Deep-merges the payload into every match | `{ object_id }[]` |
-| `UPDATE collection SET ...` | Evaluates SQLite expressions, then replaces assigned paths | `{ object_id }[]` |
-| `UPSERT [INTO] collection ...` | Deep-merges matches or inserts a miss | `{ object_id, inserted? }[]` |
-| `INSERT OR UPDATE [INTO] ...` | Alias of `UPSERT` | `{ object_id, inserted? }[]` |
-| `INSERT OR REPLACE [INTO] ...` | Truly replaces matches; omitted fields are removed | `{ object_id, inserted? }[]` |
-| `DELETE FROM collection ...` | Deletes complete matching documents | `{ object_id }[]` |
-| `DELETE fields FROM collection ...` | Deletes selected paths and rewrites each match | `{ object_id }[]` |
+| Statement                           | Behavior                                                     | Result                        |
+| ----------------------------------- | ------------------------------------------------------------ | ----------------------------- |
+| `INSERT [INTO] collection`          | Inserts one payload, or a batch when the payload is an array | object ID, or an array of IDs |
+| `GET collection ...`                | Reconstructs complete typed documents                        | document array                |
+| `FIND collection ...`               | Alias of `GET`                                               | document array                |
+| `COLLECT collection ...`            | Alias of `GET`                                               | document array                |
+| `SELECT ... FROM collection ...`    | Runs a flat SQLite-style projection                          | row array                     |
+| `UPDATE collection ...` + payload   | Deep-merges the payload into every match                     | `{ object_id }[]`             |
+| `UPDATE collection SET ...`         | Evaluates SQLite expressions, then replaces assigned paths   | `{ object_id }[]`             |
+| `UPSERT [INTO] collection ...`      | Deep-merges matches or inserts a miss                        | `{ object_id, inserted? }[]`  |
+| `INSERT OR UPDATE [INTO] ...`       | Alias of `UPSERT`                                            | `{ object_id, inserted? }[]`  |
+| `INSERT OR REPLACE [INTO] ...`      | Truly replaces matches; omitted fields are removed           | `{ object_id, inserted? }[]`  |
+| `DELETE FROM collection ...`        | Deletes complete matching documents                          | `{ object_id }[]`             |
+| `DELETE fields FROM collection ...` | Deletes selected paths and rewrites each match               | `{ object_id }[]`             |
 
 Legacy full-delete syntax such as `DELETE files FROM files WHERE ...` remains
 supported.
@@ -490,10 +498,13 @@ an object whose key may be `$name` or `name`; the dollar-prefixed key wins even
 when its value is `null`.
 
 ```js
-await database.execute('app', 'GET users WHERE age >= ? AND active = ?', [18, true])
-await database.execute('app', 'GET users WHERE email = $email', {
-  $email: 'user@example.test',
-})
+await database.execute("app", "GET users WHERE age >= ? AND active = ?", [
+  18,
+  true,
+]);
+await database.execute("app", "GET users WHERE email = $email", {
+  $email: "user@example.test",
+});
 ```
 
 Direct `SET` parameters preserve native document types, including `Date`,
@@ -503,10 +514,10 @@ types:
 
 ```js
 await database.execute(
-  'app',
-  'UPDATE users SET profile=$profile, visits=visits+1 WHERE id=$id',
-  { $id: 7, $profile: { theme: 'dark' } },
-)
+  "app",
+  "UPDATE users SET profile=$profile, visits=visits+1 WHERE id=$id",
+  { $id: 7, $profile: { theme: "dark" } },
+);
 ```
 
 ## Paths, wildcards, and aliases
@@ -540,17 +551,17 @@ both keys. Use `SELECT home.city AS residence` for one stable output name.
 `GET`/`FIND`/`COLLECT` reconstruct the logical document. Flat `SELECT` keeps
 SQLite-compatible scalar behavior while decoding blob-backed payloads.
 
-| Input | Document read | Flat `SELECT` |
-| --- | --- | --- |
-| `null` / property `undefined` | `null` | `null` |
-| boolean | boolean | `0` or `1` |
-| finite number | number | number |
-| `BigInt` | `BigInt` | decimal string |
-| valid `Date` | `Date` | epoch milliseconds |
-| string / long text | string | string |
-| array | array, including nested typed values | array |
-| plain object | nested object | selected object node is its child count; descendants are selectable |
-| `Buffer`, typed array, `ArrayBuffer`, or `Blob` | `Buffer` | `Buffer` |
+| Input                                           | Document read                        | Flat `SELECT`                                                       |
+| ----------------------------------------------- | ------------------------------------ | ------------------------------------------------------------------- |
+| `null` / property `undefined`                   | `null`                               | `null`                                                              |
+| boolean                                         | boolean                              | `0` or `1`                                                          |
+| finite number                                   | number                               | number                                                              |
+| `BigInt`                                        | `BigInt`                             | decimal string                                                      |
+| valid `Date`                                    | `Date`                               | epoch milliseconds                                                  |
+| string / long text                              | string                               | string                                                              |
+| array                                           | array, including nested typed values | array                                                               |
+| plain object                                    | nested object                        | selected object node is its child count; descendants are selectable |
+| `Buffer`, typed array, `ArrayBuffer`, or `Blob` | `Buffer`                             | `Buffer`                                                            |
 
 Arrays are atomic values rather than queryable child collections. `undefined`
 inside an array is preserved. Binary values inside arrays are base64-encoded as
@@ -641,6 +652,12 @@ do not replace application-specific load, failure, and recovery testing.
 
 Report reproducible defects and documentation gaps through the repository's
 [GitHub issues](https://github.com/kbaghini/node-idb/issues).
+
+- See [CONTRIBUTING.md](https://github.com/kbaghini/node-idb/blob/master/CONTRIBUTING.md) before proposing a change.
+- Report security issues according to [SECURITY.md](https://github.com/kbaghini/node-idb/blob/master/SECURITY.md), not in a
+  public issue.
+- Version history and release notes are available in
+  [CHANGELOG.md](https://github.com/kbaghini/node-idb/blob/master/CHANGELOG.md) and [GitHub Releases](https://github.com/kbaghini/node-idb/releases).
 
 ## License
 

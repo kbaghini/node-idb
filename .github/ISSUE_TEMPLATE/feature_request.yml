@@ -1,0 +1,42 @@
+name: Feature request
+description: Propose a focused improvement to node-idb.
+title: "[Feature]: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What limitation or use case should this address?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed API or behavior
+      description: Show a small example when possible.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Explain current workarounds and why they are insufficient.
+
+  - type: textarea
+    id: compatibility
+    attributes:
+      label: Compatibility, storage, and performance impact
+      description: Consider legacy files, SQL behavior, migrations, disk usage, and concurrency.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checklist
+      options:
+        - label: I reviewed the documented suitability and limitations.
+          required: true
+        - label: I searched existing issues and releases.
+          required: true

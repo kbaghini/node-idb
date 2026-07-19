@@ -1,0 +1,57 @@
+name: Bug report
+description: Report reproducible incorrect behavior or data-integrity problems.
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for helping improve node-idb. Do not report vulnerabilities here; use the private security reporting link.
+
+  - type: input
+    id: version
+    attributes:
+      label: node-idb version
+      placeholder: 0.1.1
+    validations:
+      required: true
+
+  - type: input
+    id: node
+    attributes:
+      label: Node.js version and operating system
+      placeholder: Node.js 22.x on Windows 11
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: Describe the observed behavior and what you expected.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: Include a small runnable example, statement, document shape, and error output.
+      render: javascript
+    validations:
+      required: true
+
+  - type: textarea
+    id: storage
+    attributes:
+      label: Storage and concurrency context
+      description: State whether storage is memory or disk, local or networked, legacy or new, and whether multiple processes write it.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checklist
+      options:
+        - label: I searched existing issues and releases.
+          required: true
+        - label: I removed credentials and private data from the reproduction.
+          required: true
