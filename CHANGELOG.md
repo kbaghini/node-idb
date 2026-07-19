@@ -23,6 +23,7 @@ All notable changes to this project are documented here. The format follows
   systems.
 - Added contribution, security, conduct, issue, pull-request, dependency-update,
   and release automation files.
+- Added npm trusted-publishing automation with automatic package provenance.
 
 ## 0.1.0 - 2026-07-17
 

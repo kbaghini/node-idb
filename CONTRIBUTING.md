@@ -70,3 +70,10 @@ Keep pull requests narrow enough to review. Explain:
 
 By contributing, you agree that your contribution is licensed under the MIT
 License used by this repository.
+
+## Releases
+
+Maintainers publish by pushing a version tag such as `v0.1.1`. The release
+workflow verifies that the tag matches `package.json`, runs the complete test
+and package checks, publishes through npm trusted publishing, and creates the
+matching GitHub Release. Never move or reuse a published version tag.
