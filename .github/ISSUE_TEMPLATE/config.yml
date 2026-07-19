@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/kbaghini/node-idb/security/advisories/new
+    about: Report vulnerabilities privately instead of opening a public issue.
+  - name: Usage and limitations guide
+    url: https://github.com/kbaghini/node-idb#readme
+    about: Review supported use cases, sizing guidance, and limitations first.

@@ -1,6 +1,6 @@
 {
   "name": "node-idb",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "A transactional SQLite document store for Node.js with typed values, SQL-style queries, deterministic aliases, and legacy IDB compatibility.",
   "type": "module",
   "main": "./src/index.js",
