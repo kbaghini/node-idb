@@ -47,6 +47,10 @@
     "type": "git",
     "url": "git+https://github.com/kbaghini/node-idb.git"
   },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "bugs": {
     "url": "https://github.com/kbaghini/node-idb/issues"
   },

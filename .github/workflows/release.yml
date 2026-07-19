@@ -12,6 +12,9 @@ jobs:
   release:
     name: Validate and create release
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
 
     steps:
       - name: Check out tag
@@ -21,8 +24,15 @@ jobs:
         uses: actions/setup-node@v7
         with:
           node-version: "24"
-          registry-url: https://registry.npmjs.org
           package-manager-cache: false
+
+      - name: Verify OIDC availability
+        shell: bash
+        run: |
+          if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] || [ -z "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ]; then
+            echo "GitHub did not provide the OIDC environment required by npm trusted publishing."
+            exit 1
+          fi
 
       - name: Install dependencies
         run: npm ci
@@ -52,7 +62,7 @@ jobs:
           if npm view "$NAME@$VERSION" version >/dev/null 2>&1; then
             echo "$NAME@$VERSION is already published."
           else
-            npm publish --access public
+            npm publish --access public --provenance
           fi
 
       - name: Create GitHub Release
