@@ -27,6 +27,24 @@ async function temporaryRoot(context, prefix) {
   return root
 }
 
+async function waitForManagedIndex(database, collection, fieldPath, timeoutMs = 10_000) {
+  const deadline = Date.now() + timeoutMs
+  let diagnostics
+
+  do {
+    diagnostics = await database.diagnostics()
+    const state = diagnostics.openCollections.find(
+      ({ collection: current }) => current === collection,
+    )
+    if (state?.autoIndexing.managedIndexes.some(({ path: current }) => current === fieldPath)) {
+      return diagnostics
+    }
+    await delay(50)
+  } while (Date.now() < deadline)
+
+  assert.fail(`Timed out waiting for the automatic index on ${collection}.${fieldPath}`)
+}
+
 /** @param {string} filename */
 function openSqlite(filename) {
   return new Promise((resolve, reject) => {
@@ -315,8 +333,7 @@ test('automatic indexing learns canonical aliased filters and persists its decis
     await database.execute('SELECT u.email FROM users u WHERE u.email = ?', ['ada@example.test']),
     [{ object_id: 1, email: 'ada@example.test' }],
   )
-  await delay(350)
-  const learned = await database.diagnostics()
+  const learned = await waitForManagedIndex(database, 'users', 'email')
   assert.equal(learned.openCollections[0].autoIndexing.managedIndexes[0].path, 'email')
   const [optimization] = await database.optimizeIndexes({ dryRun: true })
   assert.equal(optimization.changed, null)
@@ -404,7 +421,6 @@ test('automatic indexing ignores expressions that cannot use predicate indexes',
       (await database.execute('SELECT email FROM users WHERE LOWER(email) = ?', ['ada@example.test'])).length,
       1,
     )
-    await delay(350)
     const [plan] = await database.optimizeIndexes({ dryRun: true })
     assert.equal(plan.candidates.some(({ path: fieldPath }) => fieldPath === 'email'), false)
     assertOptionalIndexes((await inspectFieldIndexes(storagePath, 'users')).byPath, () => false)

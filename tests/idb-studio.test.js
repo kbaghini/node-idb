@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { access, mkdir, mkdtemp, readdir, rm, symlink } from 'node:fs/promises'
+import { access, mkdir, mkdtemp, readdir, realpath, rm, symlink } from 'node:fs/promises'
 import { request as httpRequest } from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
@@ -301,7 +301,7 @@ test('Studio is loopback-only, token-protected, origin-bound, and closes cleanly
   assert.equal(new URL(studio.url).hostname, '127.0.0.1')
   assert.equal(studio.port > 0, true)
   assert.equal(studio.closed, false)
-  assert.equal(path.resolve(studio.rootPath), path.resolve(fixture.rootPath))
+  assert.equal(studio.rootPath, await realpath(fixture.rootPath))
   assert.equal(new URL(studio.url).search, '')
   assert.equal(bearerPattern.test(token), false)
 
