@@ -6,8 +6,6 @@ import path from "node:path";
 
 import { createIdb } from "../src/index.js";
 
-const PROJECT = "sql-contract";
-
 let database;
 let temporaryRoot;
 
@@ -15,7 +13,7 @@ const withoutObjectIds = (rows) =>
   rows.map(({ object_id: _objectId, ...row }) => row);
 
 const insert = (collection, documents) =>
-  database.execute(PROJECT, `INSERT INTO ${collection}`, documents);
+  database.execute(`INSERT INTO ${collection}`, documents);
 
 describe("IDB SQL contract", { concurrency: false }, () => {
   before(async () => {
@@ -48,7 +46,6 @@ describe("IDB SQL contract", { concurrency: false }, () => {
 
     const explicit = withoutObjectIds(
       await database.execute(
-        PROJECT,
         `SELECT home.city AS residence, work.city AS office
            FROM alias_home_first`,
       ),
@@ -59,7 +56,6 @@ describe("IDB SQL contract", { concurrency: false }, () => {
 
     const exact = withoutObjectIds(
       await database.execute(
-        PROJECT,
         "SELECT home.city FROM alias_home_first",
       ),
     );
@@ -67,7 +63,7 @@ describe("IDB SQL contract", { concurrency: false }, () => {
 
     for (const collection of ["alias_home_first", "alias_work_first"]) {
       const [row] = withoutObjectIds(
-        await database.execute(PROJECT, `SELECT city FROM ${collection}`),
+        await database.execute(`SELECT city FROM ${collection}`),
       );
 
       assert.deepEqual(Object.keys(row).sort(), ["home.city", "work.city"]);
@@ -85,7 +81,6 @@ describe("IDB SQL contract", { concurrency: false }, () => {
 
     const rows = withoutObjectIds(
       await database.execute(
-        PROJECT,
         `SELECT person.name AS person, person.profile.city AS city
            FROM table_alias_docs AS person
           WHERE person.score >= ?
@@ -100,8 +95,160 @@ describe("IDB SQL contract", { concurrency: false }, () => {
     ]);
   });
 
+  test("direct object projections reconstruct mixed native values while arrays remain atomic", async () => {
+    const born = new Date("2026-01-02T03:04:05.678Z");
+    const changed = new Date("2026-02-03T04:05:06.789Z");
+    const bytes = Buffer.from([0, 1, 127, 128, 255]);
+    const longText = "structured-value-".repeat(30);
+    await insert("structured_projection_docs", [
+      {
+        ordinal: 1,
+        name: "object",
+        active: true,
+        contact: {
+          details: {
+            email: "ada@example.test",
+            born,
+            big: 9_007_199_254_740_993n,
+            bytes,
+            longText,
+            empty: {},
+            nestedArray: [changed, 10n, Buffer.from([9, 8]), { valid: true }],
+          },
+        },
+        tags: ["admin", { changed, big: 11n, bytes: Buffer.from([7, 6]) }],
+      },
+      { ordinal: 2, name: "array", contact: { details: ["one", { nested: true }] }, tags: [] },
+      { ordinal: 3, name: "scalar", contact: { details: "plain" }, tags: null },
+      { ordinal: 4, name: "null", contact: { details: null } },
+      { ordinal: 5, name: "empty", contact: { details: {} } },
+      { ordinal: 6, name: "missing" },
+    ]);
+
+    const rows = await database.execute(
+      `SELECT person.contact.details AS ContactDetails,
+              person.name,
+              person.tags,
+              person.active
+         FROM structured_projection_docs AS person
+        ORDER BY person.ordinal`,
+    );
+    assert.deepEqual(rows[0], {
+      object_id: rows[0].object_id,
+      ContactDetails: {
+        email: "ada@example.test",
+        born,
+        big: 9_007_199_254_740_993n,
+        bytes,
+        longText,
+        empty: {},
+        nestedArray: [changed, 10n, Buffer.from([9, 8]), { valid: true }],
+      },
+      name: "object",
+      tags: ["admin", { changed, big: 11n, bytes: Buffer.from([7, 6]) }],
+      active: 1,
+    });
+    assert.deepEqual(rows.slice(1).map(({ ContactDetails, name, tags }) => ({
+      ContactDetails,
+      name,
+      tags,
+    })), [
+      { ContactDetails: ["one", { nested: true }], name: "array", tags: [] },
+      { ContactDetails: "plain", name: "scalar", tags: null },
+      { ContactDetails: null, name: "null", tags: null },
+      { ContactDetails: {}, name: "empty", tags: null },
+      { ContactDetails: null, name: "missing", tags: null },
+    ]);
+
+    const [overlap] = await database.execute(
+      `SELECT person.contact, person.contact.details AS details
+         FROM structured_projection_docs AS person
+        WHERE person.ordinal = 1`,
+    );
+    assert.deepEqual(overlap.contact.details, overlap.details);
+    assert.notStrictEqual(overlap.contact.details, overlap.details);
+
+    const [collisionSafe] = await database.execute(
+      `SELECT object_id AS source_id, contact.details AS object_id
+         FROM structured_projection_docs WHERE ordinal = 1`,
+    );
+    assert.equal(typeof collisionSafe.source_id, "number");
+    assert.deepEqual(collisionSafe.object_id, rows[0].ContactDetails);
+
+    assert.deepEqual(
+      await database.execute("SELECT DISTINCT tags FROM structured_projection_docs"),
+      [
+        { tags: rows[0].tags },
+        { tags: [] },
+        { tags: null },
+      ],
+    );
+    const groupedTags = await database.execute(
+      "SELECT tags, COUNT(*) AS total FROM structured_projection_docs GROUP BY tags",
+    );
+    assert.deepEqual(groupedTags.find(({ tags }) => tags === null), { tags: null, total: 4 });
+    assert.deepEqual(groupedTags.find(({ tags }) => Array.isArray(tags) && tags.length === 0), {
+      tags: [],
+      total: 1,
+    });
+    assert.deepEqual(
+      groupedTags.find(({ tags }) => Array.isArray(tags) && tags.length === 2),
+      { tags: rows[0].tags, total: 1 },
+    );
+    await assert.rejects(
+      database.execute("SELECT DISTINCT contact.details FROM structured_projection_docs"),
+      /object projections.*DISTINCT/i,
+    );
+    await assert.rejects(
+      database.execute(
+        "SELECT contact.details, COUNT(*) AS count FROM structured_projection_docs GROUP BY contact.details",
+      ),
+      /object projections.*aggregate|GROUP BY/i,
+    );
+    await assert.rejects(
+      database.execute(
+        "SELECT contact.details AS value, name AS VALUE FROM structured_projection_docs",
+      ),
+      /duplicate.*alias/i,
+    );
+
+    await insert("persons", {
+      user: {
+        name: "Ada",
+        contact: {
+          details: { email: "ada@example.test", channels: ["email", "sms"] },
+        },
+      },
+    });
+    assert.deepEqual(
+      withoutObjectIds(await database.execute(
+        "SELECT user.contact.details, user.name FROM persons",
+      )),
+      [{
+        details: { email: "ada@example.test", channels: ["email", "sms"] },
+        name: "Ada",
+      }],
+    );
+    const [storedPathWildcard] = withoutObjectIds(
+      await database.execute("SELECT user.* FROM persons"),
+    );
+    assert.equal(storedPathWildcard.name, "Ada");
+    assert.equal(storedPathWildcard.email, "ada@example.test");
+    assert.deepEqual(
+      await database.execute("SELECT user.* FROM persons AS user"),
+      [{
+        user: {
+          name: "Ada",
+          contact: {
+            details: { email: "ada@example.test", channels: ["email", "sms"] },
+          },
+        },
+      }],
+    );
+  });
+
   test("quoted reserved words and hyphens work in collection and field names", async () => {
-    await database.execute(PROJECT, "INSERT INTO `order-log`", [
+    await database.execute("INSERT INTO `order-log`", [
       {
         "first-name": "Ada",
         order: "priority",
@@ -115,7 +262,6 @@ describe("IDB SQL contract", { concurrency: false }, () => {
 
     const rows = withoutObjectIds(
       await database.execute(
-        PROJECT,
         `SELECT entry.\`first-name\` AS first_name,
                 entry.\`order\` AS ordering,
                 entry.\`select\` AS selected,
@@ -140,18 +286,16 @@ describe("IDB SQL contract", { concurrency: false }, () => {
     ]);
 
     await database.execute(
-      PROJECT,
-      "DELETE `from city`, `comma,field` FROM `order-log` WHERE `group`='staff'",
+      "UNSET `from city`, `comma,field` FROM `order-log` WHERE `group`='staff'",
     );
-    const [remaining] = await database.execute(PROJECT, "GET `order-log`");
+    const [remaining] = await database.execute("FIND `order-log`");
     assert.ok(!("from city" in remaining));
     assert.ok(!("comma,field" in remaining));
 
     await database.execute(
-      PROJECT,
-      "DELETE `order-log` FROM `order-log` WHERE `group`='staff'",
+      "DELETE FROM `order-log` WHERE `group`='staff'",
     );
-    assert.deepEqual(await database.execute(PROJECT, "GET `order-log`"), []);
+    assert.deepEqual(await database.execute("FIND `order-log`"), []);
   });
 
   test("question-mark and star field wildcards retain their distinct depth", async () => {
@@ -168,7 +312,7 @@ describe("IDB SQL contract", { concurrency: false }, () => {
     ]);
 
     const [topLevel] = withoutObjectIds(
-      await database.execute(PROJECT, "SELECT ? FROM wildcard_docs"),
+      await database.execute("SELECT ? FROM wildcard_docs"),
     );
     assert.equal(topLevel.label, "one");
     assert.ok("profile" in topLevel);
@@ -177,26 +321,45 @@ describe("IDB SQL contract", { concurrency: false }, () => {
     assert.ok(!("phoneNumber" in topLevel));
 
     const [oneLevel] = withoutObjectIds(
-      await database.execute(PROJECT, "SELECT profile.? FROM wildcard_docs"),
+      await database.execute("SELECT profile.? FROM wildcard_docs"),
     );
     assert.equal(oneLevel.displayName, "Ada");
     assert.equal(oneLevel.contactEmail, "ada@example.test");
     assert.ok(!("phoneNumber" in oneLevel));
 
     const [recursiveProfile] = withoutObjectIds(
-      await database.execute(PROJECT, "SELECT profile.* FROM wildcard_docs"),
+      await database.execute("SELECT profile.* FROM wildcard_docs"),
     );
     assert.equal(recursiveProfile.displayName, "Ada");
     assert.equal(recursiveProfile.phoneNumber, "111");
     assert.ok(!("scoreValue" in recursiveProfile));
 
-    const [recursiveDocument] = withoutObjectIds(
-      await database.execute(PROJECT, "SELECT * FROM wildcard_docs"),
+    const expectedDocument = {
+      label: "one",
+      profile: {
+        displayName: "Ada",
+        contactEmail: "ada@example.test",
+        contact: { phoneNumber: "111" },
+      },
+      metrics: { scoreValue: 9 },
+    };
+    assert.deepEqual(
+      await database.execute("SELECT * FROM wildcard_docs"),
+      [expectedDocument],
     );
-    assert.equal(recursiveDocument.label, "one");
-    assert.equal(recursiveDocument.displayName, "Ada");
-    assert.equal(recursiveDocument.phoneNumber, "111");
-    assert.equal(recursiveDocument.scoreValue, 9);
+    assert.deepEqual(
+      await database.execute("SELECT document.* FROM wildcard_docs AS document"),
+      [expectedDocument],
+    );
+    assert.deepEqual(await database.execute("FIND wildcard_docs"), [expectedDocument]);
+    await assert.rejects(
+      database.execute("SELECT DISTINCT * FROM wildcard_docs"),
+      /complete documents.*DISTINCT/i,
+    );
+    await assert.rejects(
+      database.execute("SELECT * FROM wildcard_docs GROUP BY label"),
+      /complete documents.*GROUP BY/i,
+    );
   });
 
   test("positional and named parameters bind values without mutating inputs", async () => {
@@ -209,7 +372,6 @@ describe("IDB SQL contract", { concurrency: false }, () => {
     const positionalParameters = [70, true];
     const positional = withoutObjectIds(
       await database.execute(
-        PROJECT,
         `SELECT name, score FROM parameter_docs
           WHERE score >= ? AND active = ?
           ORDER BY score DESC`,
@@ -222,7 +384,6 @@ describe("IDB SQL contract", { concurrency: false }, () => {
     const namedParameters = { $minimum: 60, $pattern: "A%" };
     const named = withoutObjectIds(
       await database.execute(
-        PROJECT,
         `SELECT name FROM parameter_docs
           WHERE score >= $minimum AND name LIKE $pattern
           ORDER BY name`,
@@ -247,7 +408,6 @@ describe("IDB SQL contract", { concurrency: false }, () => {
     const names = async (where) =>
       withoutObjectIds(
         await database.execute(
-          PROJECT,
           `SELECT name FROM filter_docs WHERE ${where} ORDER BY name`,
         ),
       ).map((row) => row.name);
@@ -276,7 +436,6 @@ describe("IDB SQL contract", { concurrency: false }, () => {
     ]);
     assert.deepEqual(
       withoutObjectIds(await database.execute(
-        PROJECT,
         "SELECT value FROM escaped_pattern_docs WHERE value LIKE 'rate!%%' ESCAPE '!'",
       )),
       [{ value: "rate%fixed" }],
@@ -293,7 +452,6 @@ describe("IDB SQL contract", { concurrency: false }, () => {
 
     const page = withoutObjectIds(
       await database.execute(
-        PROJECT,
         `SELECT name FROM ordered_docs
           ORDER BY score DESC, name ASC
           LIMIT 2 OFFSET 1`,
@@ -303,7 +461,6 @@ describe("IDB SQL contract", { concurrency: false }, () => {
 
     const groups = withoutObjectIds(
       await database.execute(
-        PROJECT,
         `SELECT role, COUNT(*) AS total, AVG(score) AS average
            FROM ordered_docs
           GROUP BY role
@@ -317,7 +474,6 @@ describe("IDB SQL contract", { concurrency: false }, () => {
 
     assert.deepEqual(
       withoutObjectIds(await database.execute(
-        PROJECT,
         `SELECT role, COUNT(*) AS total
            FROM ordered_docs
           GROUP BY role
@@ -328,14 +484,12 @@ describe("IDB SQL contract", { concurrency: false }, () => {
     );
     assert.deepEqual(
       await database.execute(
-        PROJECT,
         `SELECT COUNT(DISTINCT role) AS "uniqueRoles" FROM ordered_docs`,
       ),
       [{ uniqueRoles: 2 }],
     );
     assert.deepEqual(
       withoutObjectIds(await database.execute(
-        PROJECT,
         `SELECT name,
                 CASE role WHEN 'admin' THEN 'privileged' ELSE 'standard' END AS kind
            FROM ordered_docs
@@ -350,7 +504,6 @@ describe("IDB SQL contract", { concurrency: false }, () => {
     );
 
     const distinct = await database.execute(
-      PROJECT,
       "SELECT DISTINCT role FROM ordered_docs ORDER BY role",
     );
     assert.deepEqual(distinct, [{ role: "admin" }, { role: "user" }]);
@@ -364,14 +517,12 @@ describe("IDB SQL contract", { concurrency: false }, () => {
     ]);
     assert.deepEqual(
       await database.execute(
-        PROJECT,
         "SELECT DISTINCT value FROM typed_distinct_docs ORDER BY value",
       ),
       [{ value: 0 }, { value: 1 }],
     );
 
     const objectIds = await database.execute(
-      PROJECT,
       `SELECT item.object_id AS "DocumentID", item.name
          FROM ordered_docs AS item
         ORDER BY item.name`,
@@ -395,7 +546,6 @@ describe("IDB SQL contract", { concurrency: false }, () => {
     ]);
 
     const updated = await database.execute(
-      PROJECT,
       `UPDATE formula_docs
           SET count = count + ?,
               price = ROUND(price * ?, 1),
@@ -408,7 +558,6 @@ describe("IDB SQL contract", { concurrency: false }, () => {
 
     const rows = withoutObjectIds(
       await database.execute(
-        PROJECT,
         `SELECT name, count, price, label
            FROM formula_docs
           ORDER BY name`,
@@ -429,7 +578,6 @@ describe("IDB SQL contract", { concurrency: false }, () => {
 
     assert.deepEqual(
       withoutObjectIds(await database.execute(
-        PROJECT,
         `SELECT key, value=1 AS matches
            FROM null_logic_docs
           ORDER BY key`,
@@ -442,7 +590,6 @@ describe("IDB SQL contract", { concurrency: false }, () => {
     );
     assert.deepEqual(
       withoutObjectIds(await database.execute(
-        PROJECT,
         `SELECT key FROM null_logic_docs
           WHERE NOT (value=1)
           ORDER BY key`,
@@ -451,7 +598,6 @@ describe("IDB SQL contract", { concurrency: false }, () => {
     );
     assert.deepEqual(
       withoutObjectIds(await database.execute(
-        PROJECT,
         `SELECT key FROM null_logic_docs
           WHERE (value=1) IS NULL`,
       )),
@@ -459,11 +605,10 @@ describe("IDB SQL contract", { concurrency: false }, () => {
     );
 
     await database.execute(
-      PROJECT,
       "UPDATE null_logic_docs SET matches=(value=1)",
     );
     assert.deepEqual(
-      await database.execute(PROJECT, "GET null_logic_docs ORDER BY key"),
+      await database.execute("FIND null_logic_docs ORDER BY key"),
       [
         { key: "missing", matches: null },
         { key: "one", value: 1, matches: 1 },
@@ -472,7 +617,7 @@ describe("IDB SQL contract", { concurrency: false }, () => {
     );
   });
 
-  test("DELETE can remove selected fields or complete matching documents", async () => {
+  test("UNSET removes selected fields and DELETE removes complete matching documents", async () => {
     await insert("delete_docs", [
       {
         name: "keep",
@@ -487,15 +632,13 @@ describe("IDB SQL contract", { concurrency: false }, () => {
     ]);
 
     const partiallyDeleted = await database.execute(
-      PROJECT,
-      "DELETE profile.city, status FROM delete_docs WHERE name = ?",
+      "UNSET profile.city, status FROM delete_docs WHERE name = ?",
       ["keep"],
     );
     assert.equal(partiallyDeleted.length, 1);
 
     const [remaining] = await database.execute(
-      PROJECT,
-      "GET delete_docs WHERE name = ?",
+      "FIND delete_docs WHERE name = ?",
       ["keep"],
     );
     assert.deepEqual(remaining, {
@@ -504,43 +647,29 @@ describe("IDB SQL contract", { concurrency: false }, () => {
     });
 
     const fullyDeleted = await database.execute(
-      PROJECT,
       "DELETE FROM delete_docs WHERE name = ?",
       ["remove"],
     );
     assert.equal(fullyDeleted.length, 1);
 
     const documents = await database.execute(
-      PROJECT,
-      "GET delete_docs ORDER BY name",
+      "FIND delete_docs ORDER BY name",
     );
     assert.deepEqual(documents, [
       { name: "keep", profile: { zip: "11111" } },
     ]);
   });
 
-  test("raw collection prefixes accept SELECT and EXPLAIN only", async (t) => {
+  test("QUERY ON accepts read-only SELECT and EXPLAIN statements", async () => {
     await insert("raw_docs", [{ value: 1 }]);
 
-    for (const prefix of ["ON", "IN", "OVER", "WITH", "USE", "USING"]) {
-      await t.test(prefix, async () => {
-        const rows = await database.execute(
-          PROJECT,
-          `${prefix} raw_docs SELECT ? AS value`,
-          [prefix],
-        );
-        assert.deepEqual(rows, [{ value: prefix }]);
-      });
-    }
-
     const queryPrefix = await database.execute(
-      PROJECT,
-      "QUERY ON raw_docs SELECT 42 AS value",
+      "QUERY ON raw_docs SELECT ? AS value",
+      [42],
     );
     assert.deepEqual(queryPrefix, [{ value: 42 }]);
 
     const plan = await database.execute(
-      PROJECT,
       "QUERY ON raw_docs EXPLAIN QUERY PLAN SELECT 1",
     );
     assert.ok(plan.length > 0);
@@ -548,7 +677,6 @@ describe("IDB SQL contract", { concurrency: false }, () => {
 
     await assert.rejects(
       database.execute(
-        PROJECT,
         "QUERY ON raw_docs UPDATE tbl_record SET last_record_id = 0",
       ),
       /read.only|SELECT|EXPLAIN/i,

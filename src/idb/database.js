@@ -6,14 +6,18 @@ import sqlite3 from 'sqlite3'
 
 /**
  * @param {string} filename
+ * @param {number} [mode]
  * @returns {Promise<Database>}
  */
-export function openDatabase(filename) {
+export function openDatabase(filename, mode) {
   return new Promise((resolve, reject) => {
-    const database = new sqlite3.Database(filename, (error) => {
+    const callback = (error) => {
       if (error) reject(error)
       else resolve(database)
-    })
+    }
+    const database = mode === undefined
+      ? new sqlite3.Database(filename, callback)
+      : new sqlite3.Database(filename, mode, callback)
   })
 }
 

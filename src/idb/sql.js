@@ -2,7 +2,7 @@
 
 import sqliteParser from 'sqlite-parser'
 
-import { ValueType, decodeValue } from './codec.js'
+import { ValueType, decodeValue, deepClone } from './codec.js'
 import { indexedValueExpression, valueTable } from './collection.js'
 import { quoteIdentifier } from './database.js'
 
@@ -305,6 +305,19 @@ function hasAggregate(node) {
   return Object.values(node).some((/** @type {any} */ entry) => hasAggregate(entry))
 }
 
+/**
+ * A lone bare or real table-qualified star is the document projection. Stored
+ * path wildcards such as profile.* remain flat field projections.
+ * @param {any} statement
+ * @param {ReturnType<typeof createContext>} context
+ */
+function isDocumentProjection(statement, context) {
+  if (statement.result?.length !== 1) return false
+  const result = statement.result[0]
+  return result?.type === 'identifier' && result.variant === 'star' &&
+    normalizedReference(context, String(result.name)) === '*'
+}
+
 /** @param {any} node */
 function isStaticValue(node) {
   if (!node) return false
@@ -395,7 +408,7 @@ function render(node, context, options = {}) {
     if (node.variant === 'decimal') return String(Number(node.value))
     if (node.variant === 'text') {
       context.bindings.values.push(String(node.value))
-      return '?'
+      return `?${context.bindings.values.length}`
     }
     if (node.variant === 'null') return 'NULL'
   }
@@ -511,8 +524,78 @@ function renderClauses(statement, context) {
 }
 
 /**
- * @typedef {{ alias: string, hidden: string }} TypeMetadata
- * @typedef {{ sql: string, parameters: unknown[], metadata: TypeMetadata[], statement: any }} CompiledSql
+ * Extracts canonical field identities from parsed clauses. This deliberately
+ * records structure rather than parameter values or source aliases.
+ * @param {import('./collection.js').CollectionStore} store
+ * @param {any} statement
+ */
+function queryFieldUsage(store, statement) {
+  const context = createContext(store, statement, undefined)
+  /** @type {Map<string, { fieldId: number, path: string, kind: 'equality' | 'range' | 'order' | 'other' }>} */
+  const usage = new Map()
+
+  const addIdentifiers = (node, kind) => {
+    if (!node || typeof node !== 'object') return
+    if (Array.isArray(node)) {
+      for (const entry of node) addIdentifiers(entry, kind)
+      return
+    }
+    if (node.type === 'identifier' && !String(node.name).startsWith(namedParameterPrefix)) {
+      for (const field of resolveFields(context, String(node.name))) {
+        usage.set(`${field.id}:${kind}`, { fieldId: field.id, path: field.path, kind })
+      }
+      return
+    }
+    for (const value of Object.values(node)) addIdentifiers(value, kind)
+  }
+
+  const visitFilter = (node) => {
+    if (!node || typeof node !== 'object') return
+    if (Array.isArray(node)) {
+      for (const entry of node) visitFilter(entry)
+      return
+    }
+    if (node.type === 'expression' && node.variant === 'operation') {
+      const operation = String(node.operation || '').toLowerCase()
+      if (operation === 'and' || operation === 'or') {
+        visitFilter(node.left)
+        visitFilter(node.right)
+        return
+      }
+      const staticRight = operation.includes('between')
+        ? isStaticValue(node.right?.left) && isStaticValue(node.right?.right)
+        : isStaticValue(node.right)
+      // Keep learning aligned with renderIndexedPredicate(). An index should
+      // never be created for a function, field-to-field comparison, HAVING
+      // expression, or another shape that the compiler cannot accelerate.
+      if (
+        node.left?.type === 'identifier' &&
+        indexedOperations.has(operation) &&
+        staticRight &&
+        (!node.escape || isStaticValue(node.escape))
+      ) {
+        const kind = ['=', '==', 'is', 'in'].includes(operation)
+          ? 'equality'
+          : ['<', '<=', '>', '>=', 'between', 'like', 'glob'].includes(operation)
+            ? 'range'
+            : 'other'
+        addIdentifiers(node.left, kind)
+      }
+      return
+    }
+    for (const value of Object.values(node)) visitFilter(value)
+  }
+
+  visitFilter(statement.where)
+  addIdentifiers(statement.order, 'order')
+  addIdentifiers(statement.group, 'order')
+  return Object.freeze([...usage.values()].map((entry) => Object.freeze(entry)))
+}
+
+/**
+ * @typedef {{ alias: string, hidden: string, fieldId: number, hydrateObject: boolean }} TypeMetadata
+ * @typedef {{ fieldId: number, path: string, kind: 'equality' | 'range' | 'order' | 'other' }} QueryFieldUsage
+ * @typedef {{ sql: string, parameters: unknown[], metadata: TypeMetadata[], statement: any, usage: readonly QueryFieldUsage[], mode: 'rows' | 'documents', hiddenIdentity: string | null, objectProjectionError: string | null }} CompiledSql
  */
 
 /**
@@ -525,6 +608,25 @@ export async function compileSelect(store, sourceSql, parameters) {
   const statement = await parseSql(sourceSql)
   if (statement.variant !== 'select') throw new Error('Expected a SELECT statement')
   const context = createContext(store, statement, parameters)
+  if (isDocumentProjection(statement, context)) {
+    if (statement.distinct) {
+      throw new Error('SELECT * returns complete documents and does not support DISTINCT')
+    }
+    if (statement.group || statement.having) {
+      throw new Error(
+        'SELECT * returns complete documents and does not support GROUP BY or HAVING; select explicit scalar fields for grouped results',
+      )
+    }
+    const compiled = compileObjectIds(store, statement, parameters)
+    return {
+      ...compiled,
+      metadata: [],
+      statement,
+      mode: 'documents',
+      hiddenIdentity: null,
+      objectProjectionError: null,
+    }
+  }
   const sourceAliases = sourceResultAliases(sourceSql)
   /** @type {string[]} */
   const selections = []
@@ -545,11 +647,27 @@ export async function compileSelect(store, sourceSql, parameters) {
     return alias
   }
   const aggregate = statement.result.some(hasAggregate)
+  const objectProjectionError = statement.distinct
+    ? 'Object projections do not support DISTINCT; select scalar descendants or retrieve complete documents first'
+    : aggregate
+      ? 'Object projections cannot be combined with aggregate results; select scalar descendants or use a separate query'
+      : statement.group || statement.having
+        ? 'Object projections do not support GROUP BY or HAVING; group by scalar descendants instead'
+        : null
+  const outputAliases = new Set()
+  const registerAlias = (alias) => {
+    const normalized = String(alias).toLowerCase()
+    if (outputAliases.has(normalized)) {
+      throw new Error(`Duplicate SELECT output alias: ${alias}`)
+    }
+    outputAliases.add(normalized)
+  }
   const hasExplicitObjectId = statement.result.some(
     (/** @type {any} */ result) => result.type === 'identifier' &&
       normalizedReference(context, String(result.name)).toLowerCase() === 'object_id',
   )
   if (!aggregate && !statement.distinct && !hasExplicitObjectId) {
+    registerAlias('object_id')
     selections.push(quoteIdentifier('object_id'))
   }
 
@@ -561,6 +679,7 @@ export async function compileSelect(store, sourceSql, parameters) {
       normalizedReference(context, String(result.name)).toLowerCase() === 'object_id'
     ) {
       const alias = String(explicitAlias || 'object_id')
+      registerAlias(alias)
       selections.push(`${quoteIdentifier('object_id')} AS ${quoteIdentifier(alias)}`)
       context.resultAliases.add(alias.toLowerCase())
       continue
@@ -577,16 +696,27 @@ export async function compileSelect(store, sourceSql, parameters) {
       if (explicitAlias && fields.length > 1) {
         throw new Error(`Alias "${explicitAlias}" applies to multiple fields; use an exact path`)
       }
+      const reference = result.type === 'variable'
+        ? '?'
+        : normalizedReference(context, String(result.name))
+      const wildcardProjection = result.variant === 'star' || reference === '?' ||
+        reference.endsWith('.*') || reference.endsWith('.?')
       for (const field of fields) {
         const alias = String(explicitAlias || defaultFieldAlias(context, field))
+        registerAlias(alias)
         const hidden = nextHiddenAlias()
         selections.push(`${fieldReference(context, field)} AS ${quoteIdentifier(alias)}`)
         const storedType = quoteIdentifier(`__t_${field.id}`)
         const outputType = statement.distinct
-          ? `CASE WHEN ${storedType} IN (${ValueType.text}, ${ValueType.array}, ${ValueType.binary}) THEN ${storedType} ELSE 0 END`
+          ? `CASE WHEN ${storedType} IN (${ValueType.text}, ${ValueType.array}, ${ValueType.object}, ${ValueType.binary}) THEN ${storedType} ELSE 0 END`
           : storedType
         selections.push(`${outputType} AS ${quoteIdentifier(hidden)}`)
-        metadata.push({ alias, hidden })
+        metadata.push({
+          alias,
+          hidden,
+          fieldId: field.id,
+          hydrateObject: !wildcardProjection,
+        })
         context.resultAliases.add(alias.toLowerCase())
       }
       continue
@@ -594,10 +724,16 @@ export async function compileSelect(store, sourceSql, parameters) {
 
     const expression = render(result, context)
     const alias = String(explicitAlias || result.alias || expression.replace(/^\(|\)$/g, ''))
+    registerAlias(alias)
     selections.push(`${expression} AS ${quoteIdentifier(alias)}`)
     context.resultAliases.add(alias.toLowerCase())
   }
 
+  let hiddenIdentity = null
+  if (metadata.some(({ hydrateObject }) => hydrateObject) && !objectProjectionError) {
+    hiddenIdentity = nextHiddenAlias()
+    selections.push(`${quoteIdentifier('object_id')} AS ${quoteIdentifier(hiddenIdentity)}`)
+  }
   if (!selections.length) selections.push(quoteIdentifier('object_id'))
   const clauses = renderClauses(statement, context)
   const dataset = store.datasetCte([...context.required.values()])
@@ -608,6 +744,10 @@ export async function compileSelect(store, sourceSql, parameters) {
     parameters: context.bindings.values,
     metadata,
     statement,
+    usage: queryFieldUsage(store, statement),
+    mode: 'rows',
+    hiddenIdentity,
+    objectProjectionError,
   }
 }
 
@@ -625,6 +765,7 @@ export function compileObjectIds(store, statement, parameters) {
     sql: `WITH ${quoteIdentifier('__idb_dataset')} AS (${dataset})
       SELECT ${quoteIdentifier('object_id')} FROM ${quoteIdentifier('__idb_dataset')}${clauses}`,
     parameters: context.bindings.values,
+    usage: queryFieldUsage(store, statement),
   }
 }
 
@@ -672,16 +813,60 @@ export function compileExpression(store, statement, expression, parameters, obje
   }
 }
 
-/** @param {Record<string, unknown>[]} rows @param {TypeMetadata[]} metadata */
-export function decodeSelectRows(rows, metadata) {
+/**
+ * @param {import('./collection.js').CollectionStore} store
+ * @param {Record<string, unknown>[]} rows
+ * @param {TypeMetadata[]} metadata
+ * @param {string | null} hiddenIdentity
+ * @param {string | null} objectProjectionError
+ */
+export async function decodeSelectRows(
+  store,
+  rows,
+  metadata,
+  hiddenIdentity,
+  objectProjectionError,
+) {
+  /** @type {Map<number, Set<number>>} */
+  const requested = new Map()
   for (const row of rows) {
-    for (const { alias, hidden } of metadata) {
+    for (const entry of metadata) {
+      const type = Number(row[entry.hidden])
+      if (type !== ValueType.object || !entry.hydrateObject) continue
+      if (objectProjectionError) throw new Error(objectProjectionError)
+      const objectId = Number(hiddenIdentity && row[hiddenIdentity])
+      if (!Number.isSafeInteger(objectId) || objectId < 1) {
+        throw new Error('IDB integrity error: structured projection is missing its object identity')
+      }
+      let objectIds = requested.get(entry.fieldId)
+      if (!objectIds) {
+        objectIds = new Set()
+        requested.set(entry.fieldId, objectIds)
+      }
+      objectIds.add(objectId)
+    }
+  }
+
+  const allObjectIds = [...new Set([...requested.values()].flatMap((values) => [...values]))]
+  const projected = requested.size
+    ? await store.readSubtrees(allObjectIds, [...requested.keys()])
+    : new Map()
+  for (const row of rows) {
+    const objectId = Number(hiddenIdentity && row[hiddenIdentity])
+    for (const { alias, hidden, fieldId, hydrateObject } of metadata) {
       const type = Number(row[hidden])
       delete row[hidden]
-      if (type === ValueType.text || type === ValueType.array || type === ValueType.binary) {
+      if (type === ValueType.object && hydrateObject) {
+        const subtree = projected.get(fieldId)?.get(objectId)
+        if (subtree === undefined) {
+          throw new Error(`IDB integrity error: projected object ${fieldId} could not be reconstructed`)
+        }
+        row[alias] = deepClone(subtree)
+      } else if (type === ValueType.text || type === ValueType.array || type === ValueType.binary) {
         row[alias] = decodeValue(type, null, null, row[alias])
       }
     }
+    if (hiddenIdentity) delete row[hiddenIdentity]
   }
   return rows
 }
