@@ -1,28 +1,42 @@
 {
   "name": "node-idb",
-  "version": "0.1.1",
-  "description": "A transactional SQLite document store for Node.js with typed values, SQL-style queries, deterministic aliases, and legacy IDB compatibility.",
+  "version": "0.2.0",
+  "description": "An embedded SQLite document store for Node.js with typed values, SQL-style queries, automatic indexes, and a local browser Studio.",
   "type": "module",
   "main": "./src/index.js",
   "module": "./src/index.js",
   "types": "./src/index.d.ts",
+  "bin": {
+    "node-idb": "bin/node-idb.js"
+  },
   "exports": {
     ".": {
       "types": "./src/index.d.ts",
       "import": "./src/index.js",
       "default": "./src/index.js"
+    },
+    "./studio": {
+      "types": "./src/studio/index.d.ts",
+      "import": "./src/studio/index.js",
+      "default": "./src/studio/index.js"
     }
   },
   "files": [
     "src",
     "examples",
+    "docs",
+    "benchmarks",
+    "bin",
     "README.md",
     "LICENSE",
     "CHANGELOG.md"
   ],
   "scripts": {
-    "test": "node --test",
-    "pack:check": "npm pack --dry-run"
+    "test": "node --test && npm run test:types",
+    "test:types": "tsc --noEmit --skipLibCheck --module NodeNext --moduleResolution NodeNext --target ES2022 tests/idb-options.types.ts tests/idb-studio.types.ts",
+    "pack:check": "npm pack --dry-run",
+    "benchmark": "node benchmarks/run.js --preset standard",
+    "benchmark:quick": "node benchmarks/run.js --preset quick"
   },
   "engines": {
     "node": ">=20.19.0"
@@ -41,6 +55,10 @@
     "transactions",
     "upsert",
     "query-builder",
+    "database-gui",
+    "database-studio",
+    "admin-ui",
+    "sqlite-gui",
     "idb"
   ],
   "repository": {
@@ -60,5 +78,8 @@
   "dependencies": {
     "sqlite-parser": "^1.0.1",
     "sqlite3": "^6.0.1"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
   }
 }

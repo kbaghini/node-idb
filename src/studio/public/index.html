@@ -1,0 +1,409 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="description" content="A local management studio for node-idb databases." />
+    <title>node-idb Studio</title>
+    <link rel="stylesheet" href="/studio.css" />
+    <script src="/studio.js" type="module"></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#workspace">Skip to workspace</a>
+
+    <header class="topbar">
+      <div class="brand" aria-label="node-idb Studio">
+        <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+        <span>
+          <strong>node-idb</strong>
+          <small>Studio</small>
+        </span>
+      </div>
+
+      <div class="connection-state" role="status" aria-live="polite">
+        <span class="status-dot" id="connection-dot" aria-hidden="true"></span>
+        <span id="connection-label">Connecting</span>
+        <span class="mode-badge" id="mode-badge">read only</span>
+      </div>
+
+      <div class="topbar-actions">
+        <span class="root-summary" id="root-summary" title="Studio storage root">Storage root</span>
+        <button class="button button-subtle" id="refresh-button" type="button">
+          <span class="refresh-glyph" aria-hidden="true">↻</span>
+          Refresh
+        </button>
+      </div>
+    </header>
+
+    <main class="app-shell" id="workspace">
+      <aside class="navigator" aria-label="Database navigator">
+        <div class="panel-heading navigator-heading">
+          <div>
+            <p class="eyebrow">Navigator</p>
+            <h1>Databases</h1>
+          </div>
+          <span class="count-badge" id="database-count">0</span>
+        </div>
+
+        <label class="search-field">
+          <span class="sr-only">Filter databases and collections</span>
+          <span aria-hidden="true">⌕</span>
+          <input id="navigator-filter" type="search" placeholder="Filter navigator" autocomplete="off" />
+          <kbd>/</kbd>
+        </label>
+
+        <div class="navigator-tree" id="navigator-tree" aria-live="polite">
+          <div class="skeleton-list" aria-label="Loading databases">
+            <span></span><span></span><span></span>
+          </div>
+        </div>
+
+        <div class="navigator-footnote">
+          <span aria-hidden="true">●</span>
+          Root and immediate child folders
+        </div>
+      </aside>
+
+      <section class="main-pane">
+        <div class="context-strip">
+          <div class="breadcrumbs" id="breadcrumbs" aria-label="Current location">
+            <span>No database selected</span>
+          </div>
+          <div class="context-meta" id="context-meta"></div>
+        </div>
+
+        <nav class="tabs" aria-label="Studio areas" role="tablist">
+          <button class="tab is-active" id="browse-tab" type="button" role="tab" aria-controls="browse-panel" aria-selected="true" data-panel="browse-panel">
+            Browse
+          </button>
+          <button class="tab" id="structure-tab" type="button" role="tab" aria-controls="structure-panel" aria-selected="false" data-panel="structure-panel">
+            Structure
+          </button>
+          <button class="tab" id="query-tab" type="button" role="tab" aria-controls="query-panel" aria-selected="false" data-panel="query-panel">
+            Query
+          </button>
+          <button class="tab write-only" id="write-tab" type="button" role="tab" aria-controls="write-panel" aria-selected="false" data-panel="write-panel" hidden>
+            Write
+          </button>
+          <button class="tab" id="diagnostics-tab" type="button" role="tab" aria-controls="diagnostics-panel" aria-selected="false" data-panel="diagnostics-panel">
+            Diagnostics
+          </button>
+        </nav>
+
+        <section class="tab-panel is-active" id="browse-panel" role="tabpanel" aria-labelledby="browse-tab">
+          <div class="toolbar browse-toolbar">
+            <div class="toolbar-title">
+              <span class="collection-icon" aria-hidden="true"></span>
+              <div>
+                <h2 id="browse-title">Choose a collection</h2>
+                <p id="browse-subtitle">Select one from the navigator to inspect its documents.</p>
+              </div>
+            </div>
+            <div class="toolbar-actions">
+              <label class="compact-select">
+                <span>Rows</span>
+                <select id="page-size">
+                  <option value="10">10</option>
+                  <option value="25" selected>25</option>
+                  <option value="50">50</option>
+                  <option value="100">100</option>
+                </select>
+              </label>
+              <label class="compact-select">
+                <span>Order</span>
+                <select id="document-order">
+                  <option value="desc">Newest</option>
+                  <option value="asc">Oldest</option>
+                </select>
+              </label>
+              <button class="icon-button" id="reload-documents" type="button" title="Reload documents" aria-label="Reload documents">↻</button>
+            </div>
+          </div>
+
+          <div class="table-shell" id="document-table-shell">
+            <div class="empty-state" id="browse-empty">
+              <span class="empty-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+              <h3>Your data will appear here</h3>
+              <p>Choose a database and collection from the navigator.</p>
+            </div>
+            <table class="document-table" id="document-table" hidden>
+              <thead>
+                <tr>
+                  <th class="expand-column"><span class="sr-only">Expand</span></th>
+                  <th class="id-column">Object ID</th>
+                  <th>Document preview</th>
+                  <th class="row-actions-column"><span class="sr-only">Actions</span></th>
+                </tr>
+              </thead>
+              <tbody id="document-rows"></tbody>
+            </table>
+          </div>
+
+          <div class="pagination" id="pagination" hidden>
+            <span id="page-summary">0 documents</span>
+            <div>
+              <button class="button button-subtle" id="previous-page" type="button">Previous</button>
+              <span class="page-number" id="page-number">1</span>
+              <button class="button button-subtle" id="next-page" type="button">Next</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="tab-panel" id="structure-panel" role="tabpanel" aria-labelledby="structure-tab" hidden>
+          <div class="structure-header">
+            <div>
+              <p class="eyebrow">Discovered document shape</p>
+              <h2 id="structure-title">Choose a collection</h2>
+              <p id="structure-subtitle">Select a collection to inspect its fields, nested objects, types, coverage, and indexes.</p>
+            </div>
+            <div class="structure-actions">
+              <div class="view-switch" role="group" aria-label="Structure view">
+                <button class="is-active" id="structure-tree-mode" type="button" aria-pressed="true">Tree</button>
+                <button id="structure-list-mode" type="button" aria-pressed="false">List</button>
+              </div>
+              <button class="icon-button" id="reload-structure" type="button" title="Reload structure" aria-label="Reload structure">&#8635;</button>
+            </div>
+          </div>
+
+          <div class="structure-metrics" id="structure-metrics"></div>
+
+          <section class="structure-card">
+            <div class="structure-note">
+              <span>Types and coverage are calculated from stored documents.</span>
+              <span>Arrays are stored atomically, so their internal items are not expanded as collection fields.</span>
+            </div>
+            <div class="empty-state compact" id="structure-empty">
+              <h3>No structure loaded</h3>
+              <p>Choose a database and collection from the navigator.</p>
+            </div>
+            <div class="schema-tree" id="structure-tree" hidden></div>
+            <div class="structure-table-shell" id="structure-list" hidden>
+              <table class="structure-table">
+                <thead>
+                  <tr>
+                    <th>Field path</th>
+                    <th>Observed types</th>
+                    <th>Coverage</th>
+                    <th>Depth</th>
+                    <th>Index</th>
+                  </tr>
+                </thead>
+                <tbody id="structure-list-body"></tbody>
+              </table>
+            </div>
+          </section>
+        </section>
+
+        <section class="tab-panel" id="query-panel" role="tabpanel" aria-labelledby="query-tab" hidden>
+          <div class="split-workspace query-workspace">
+            <section class="editor-card query-card">
+              <div class="card-heading">
+                <div>
+                  <p class="eyebrow">Canonical query</p>
+                  <h2>SELECT editor</h2>
+                </div>
+                <div class="card-actions">
+                  <button class="button button-subtle" id="format-query" type="button">Format</button>
+                  <button class="button button-primary" id="run-query" type="button">
+                    <span aria-hidden="true">▶</span>
+                    Run query
+                  </button>
+                </div>
+              </div>
+              <label class="code-field">
+                <span class="sr-only">SELECT statement</span>
+                <span class="line-gutter" aria-hidden="true">1</span>
+                <textarea id="query-editor" spellcheck="false" autocomplete="off" placeholder="SELECT * FROM collection LIMIT 25"></textarea>
+              </label>
+              <div class="parameters-section">
+                <div class="section-label">
+                  <label for="query-parameters">Parameters</label>
+                  <button class="text-button" id="parameters-help" type="button" aria-expanded="false" aria-controls="parameters-guide">Typed JSON guide</button>
+                </div>
+                <textarea class="json-editor small" id="query-parameters" spellcheck="false" placeholder="[]">[]</textarea>
+                <div class="inline-guide" id="parameters-guide" hidden>
+                  Use ordinary JSON or typed values such as
+                  <code>{"$nodeIdb":{"type":"bigint","value":"42"}}</code>.
+                </div>
+              </div>
+            </section>
+
+            <aside class="builder-card" aria-label="Query builder">
+              <div class="card-heading compact">
+                <div>
+                  <p class="eyebrow">No SQL required</p>
+                  <h2>Query builder</h2>
+                </div>
+                <button class="text-button" id="reset-builder" type="button">Reset</button>
+              </div>
+
+              <div class="builder-fields">
+                <label>
+                  <span>Fields</span>
+                  <select id="builder-fields" multiple size="5" aria-describedby="builder-fields-help"></select>
+                  <small id="builder-fields-help">No selection returns complete documents.</small>
+                </label>
+                <div class="form-grid three">
+                  <label>
+                    <span>Filter field</span>
+                    <select id="builder-filter-field"><option value="">None</option></select>
+                  </label>
+                  <label>
+                    <span>Operator</span>
+                    <select id="builder-operator">
+                      <option value="=">equals</option>
+                      <option value="!=">not equal</option>
+                      <option value=">">greater</option>
+                      <option value=">=">greater or equal</option>
+                      <option value="&lt;">less</option>
+                      <option value="&lt;=">less or equal</option>
+                      <option value="LIKE">matches</option>
+                      <option value="IS NULL">is null</option>
+                      <option value="IS NOT NULL">is not null</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span>Value</span>
+                    <input id="builder-value" type="text" placeholder="JSON value" />
+                  </label>
+                </div>
+                <div class="form-grid three">
+                  <label>
+                    <span>Order by</span>
+                    <select id="builder-order-field"><option value="object_id">object_id</option></select>
+                  </label>
+                  <label>
+                    <span>Direction</span>
+                    <select id="builder-direction"><option value="ASC">Ascending</option><option value="DESC">Descending</option></select>
+                  </label>
+                  <label>
+                    <span>Limit</span>
+                    <input id="builder-limit" type="number" value="25" min="1" max="500" />
+                  </label>
+                </div>
+                <button class="button button-secondary full-width" id="build-query" type="button">Build SELECT query</button>
+              </div>
+            </aside>
+          </div>
+
+          <section class="results-card">
+            <div class="card-heading compact">
+              <div>
+                <p class="eyebrow">Results</p>
+                <h2 id="query-result-title">Ready to run</h2>
+              </div>
+              <span class="timing" id="query-timing"></span>
+            </div>
+            <div class="result-list" id="query-results">
+              <div class="empty-state compact">
+                <h3>Run a query to inspect results</h3>
+                <p>Only canonical SELECT statements are accepted here.</p>
+              </div>
+            </div>
+          </section>
+        </section>
+
+        <section class="tab-panel write-only" id="write-panel" role="tabpanel" aria-labelledby="write-tab" hidden>
+          <div class="write-layout">
+            <section class="editor-card">
+              <div class="card-heading">
+                <div>
+                  <p class="eyebrow">Explicit mutation</p>
+                  <h2 id="write-heading">Insert document</h2>
+                </div>
+                <button class="button button-subtle" id="reset-document-editor" type="button">Clear</button>
+              </div>
+              <div class="operation-switch" role="radiogroup" aria-label="Write operation">
+                <label><input type="radio" name="write-operation" value="insert" checked /><span>Insert</span></label>
+                <label><input type="radio" name="write-operation" value="replace" /><span>Replace</span></label>
+                <label><input type="radio" name="write-operation" value="update" /><span>Update</span></label>
+              </div>
+              <label class="document-id-field" id="document-id-field" hidden>
+                <span>Object ID</span>
+                <input id="document-id" type="number" min="1" inputmode="numeric" placeholder="Required for replace or update" />
+              </label>
+              <label>
+                <span class="field-label">
+                  Document &mdash; Extended JSON
+                  <small id="write-rule">Insert accepts object, array, or scalar roots.</small>
+                </span>
+                <textarea class="json-editor document-editor" id="document-editor" spellcheck="false" placeholder="{&#10;  &quot;name&quot;: &quot;Example&quot;&#10;}"></textarea>
+              </label>
+              <div class="editor-footer">
+                <span id="editor-validation" role="status">Valid JSON</span>
+                <button class="button button-primary" id="submit-document" type="button">Insert document</button>
+              </div>
+            </section>
+
+            <aside class="type-palette">
+              <div class="card-heading compact">
+                <div>
+                  <p class="eyebrow">Type helpers</p>
+                  <h2>Preserve native values</h2>
+                </div>
+              </div>
+              <p>Place the cursor in the editor and insert a typed node. Root arrays and scalars are supported.</p>
+              <div class="type-buttons">
+                <button type="button" data-type-template='{"$nodeIdb":{"type":"date","value":"2026-01-01T00:00:00.000Z"}}'><strong>Date</strong><span>ISO timestamp</span></button>
+                <button type="button" data-type-template='{"$nodeIdb":{"type":"bigint","value":"9007199254740993"}}'><strong>BigInt</strong><span>Exact integer</span></button>
+                <button type="button" data-type-template='{"$nodeIdb":{"type":"binary","value":"AAECAw=="}}'><strong>Binary</strong><span>Base64 bytes</span></button>
+                <button type="button" data-type-template='{"$nodeIdb":{"type":"undefined"}}'><strong>Undefined</strong><span>Missing value</span></button>
+              </div>
+              <div class="callout">
+                <strong>Safe editing</strong>
+                <p>Changes are sent only when you submit. Reload before editing data that another process may change; Studio does not yet use revision tokens.</p>
+              </div>
+            </aside>
+          </div>
+        </section>
+
+        <section class="tab-panel" id="diagnostics-panel" role="tabpanel" aria-labelledby="diagnostics-tab" hidden>
+          <div class="diagnostics-header">
+            <div>
+              <p class="eyebrow">Database health</p>
+              <h2>Diagnostics</h2>
+              <p>Runtime, storage, indexing, and integrity information for the selected database.</p>
+            </div>
+            <div class="toolbar-actions">
+              <button class="button button-subtle write-only" id="analyze-database" type="button" hidden>Analyze</button>
+              <button class="button button-secondary write-only" id="optimize-indexes" type="button" hidden>Optimize indexes</button>
+              <button class="button button-primary" id="load-diagnostics" type="button">Load diagnostics</button>
+            </div>
+          </div>
+          <div class="metric-grid" id="diagnostic-metrics"></div>
+          <section class="raw-diagnostics">
+            <div class="card-heading compact">
+              <div>
+                <p class="eyebrow">Complete report</p>
+                <h2>Raw diagnostics</h2>
+              </div>
+              <button class="text-button" id="copy-diagnostics" type="button">Copy JSON</button>
+            </div>
+            <pre id="diagnostics-json">Select a database, then load diagnostics.</pre>
+          </section>
+        </section>
+      </section>
+    </main>
+
+    <footer class="statusbar">
+      <span><i id="footer-dot"></i><span id="footer-status">Initializing Studio</span></span>
+      <span id="footer-selection">No collection selected</span>
+      <span>Local connection</span>
+    </footer>
+
+    <dialog class="confirm-dialog" id="delete-dialog">
+      <form method="dialog">
+        <div class="danger-mark" aria-hidden="true">!</div>
+        <h2>Delete this document?</h2>
+        <p id="delete-message">This removes the selected document permanently.</p>
+        <div class="dialog-actions">
+          <button class="button button-subtle" value="cancel">Cancel</button>
+          <button class="button button-danger" id="confirm-delete" value="confirm">Delete document</button>
+        </div>
+      </form>
+    </dialog>
+
+    <div class="toast-region" id="toast-region" aria-live="polite" aria-atomic="true"></div>
+  </body>
+</html>

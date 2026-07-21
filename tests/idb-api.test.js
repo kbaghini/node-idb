@@ -6,11 +6,9 @@ import test from "node:test";
 
 import { createIdb } from "../src/index.js";
 
-const project = "idb_api_contract";
-
 const callbackRun = (database, statement, ...args) =>
   new Promise((resolve, reject) => {
-    database.run(project, statement, ...args, (error, result) => {
+    database.run(statement, ...args, (error, result) => {
       if (error) reject(error);
       else resolve(result);
     });
@@ -23,8 +21,8 @@ test("IDB public API contract", async (t) => {
   const run = async (statement, ...params) => {
     const outcome =
       params.length > 0
-        ? await database.run(project, statement, params[0])
-        : await database.run(project, statement);
+        ? await database.run(statement, params[0])
+        : await database.run(statement);
 
     assert.equal(outcome.error, null);
     return outcome.result;
@@ -32,14 +30,14 @@ test("IDB public API contract", async (t) => {
 
   try {
     await t.test("run resolves a success or error envelope", async () => {
-      const success = await database.run(project, "INSERT INTO envelopes", {
+      const success = await database.run("INSERT INTO envelopes", {
         value: 1,
       });
 
       assert.equal(success.error, null);
       assert.equal(typeof success.result, "number");
 
-      const failure = await database.run(project, "NOT AN IDB STATEMENT");
+      const failure = await database.run("NOT AN IDB STATEMENT");
 
       assert.ok(failure.error instanceof Error);
       assert.equal(failure.result, undefined);
@@ -56,13 +54,13 @@ test("IDB public API contract", async (t) => {
 
       const documents = await callbackRun(
         database,
-        "GET callback_documents",
+        "FIND callback_documents",
       );
 
       assert.deepEqual(documents, [{ key: "callback", value: 7 }]);
 
       const callbackError = await new Promise((resolve) => {
-        database.run(project, "NOT AN IDB STATEMENT", (error, result) => {
+        database.run("NOT AN IDB STATEMENT", (error, result) => {
           resolve({ error, result });
         });
       });
@@ -73,14 +71,13 @@ test("IDB public API contract", async (t) => {
 
     await t.test("execute returns results directly and rejects errors", async () => {
       const insertedId = await database.execute(
-        project,
         "INSERT INTO execute_documents",
         { key: "execute" },
       );
 
       assert.equal(typeof insertedId, "number");
       await assert.rejects(
-        database.execute(project, "NOT AN IDB STATEMENT"),
+        database.execute("NOT AN IDB STATEMENT"),
         /unsupported|statement|syntax/i,
       );
     });
@@ -101,7 +98,7 @@ test("IDB public API contract", async (t) => {
       assert.equal(new Set(batchIds).size, 2);
       assert.ok(batchIds.every((id) => Number.isInteger(id) && id > 0));
 
-      const documents = await run("GET insert_documents ORDER BY key");
+      const documents = await run("FIND insert_documents ORDER BY key");
 
       assert.deepEqual(
         documents.map(({ key }) => key),
@@ -109,21 +106,40 @@ test("IDB public API contract", async (t) => {
       );
     });
 
-    await t.test("GET, FIND, and COLLECT are equivalent document aliases", async () => {
+    await t.test("FIND reconstructs complete documents", async () => {
       await run("INSERT INTO retrieval_documents", [
         { key: "a", value: 1 },
         { key: "b", value: 2 },
       ]);
 
-      const get = await run("GET retrieval_documents ORDER BY key");
-      const find = await run("FIND retrieval_documents ORDER BY key");
-      const collect = await run("COLLECT retrieval_documents ORDER BY key");
+      const documents = await run("FIND retrieval_documents ORDER BY key");
 
-      assert.deepEqual(find, get);
-      assert.deepEqual(collect, get);
-      assert.deepEqual(get, [
+      assert.deepEqual(documents, [
         { key: "a", value: 1 },
         { key: "b", value: 2 },
+      ]);
+    });
+
+    await t.test("command-like scalar strings remain valid document payloads", async () => {
+      const directId = await database.execute(
+        "INSERT INTO scalar_documents",
+        "FIND is stored data",
+      );
+      assert.equal(typeof directId, "number");
+
+      const outcome = await database.run(
+        "INSERT INTO scalar_documents",
+        "UPDATE is also stored data",
+      );
+      assert.equal(outcome.error, null);
+      assert.equal(typeof outcome.result, "number");
+      assert.deepEqual(await database.execute("FIND scalar_documents ORDER BY object_id"), [
+        "FIND is stored data",
+        "UPDATE is also stored data",
+      ]);
+      assert.deepEqual(await database.execute("SELECT * FROM scalar_documents ORDER BY object_id"), [
+        "FIND is stored data",
+        "UPDATE is also stored data",
       ]);
     });
 
@@ -148,7 +164,7 @@ test("IDB public API contract", async (t) => {
 
       await run("INSERT INTO typed_documents", document);
       const [actual] = await run(
-        "GET typed_documents WHERE key = $key",
+        "FIND typed_documents WHERE key = $key",
         { $key: "types" },
       );
 
@@ -176,7 +192,7 @@ test("IDB public API contract", async (t) => {
       assert.equal(updated.length, 1);
       assert.equal(typeof updated[0].object_id, "number");
 
-      const [document] = await run("GET merge_documents WHERE key = $key", {
+      const [document] = await run("FIND merge_documents WHERE key = $key", {
         $key: "merge",
       });
 
@@ -188,7 +204,7 @@ test("IDB public API contract", async (t) => {
       });
     });
 
-    await t.test("INSERT OR REPLACE removes omitted fields", async () => {
+    await t.test("REPLACE INTO removes omitted fields", async () => {
       await run("INSERT INTO replace_documents", {
         key: "replace",
         stale: true,
@@ -196,16 +212,44 @@ test("IDB public API contract", async (t) => {
       });
 
       await run(
-        "INSERT OR REPLACE INTO replace_documents WHERE key = 'replace'",
+        "REPLACE INTO replace_documents WHERE key = 'replace'",
         { key: "replace", fresh: true },
       );
 
       const documents = await run(
-        "GET replace_documents WHERE key = $key",
+        "FIND replace_documents WHERE key = $key",
         { $key: "replace" },
       );
 
       assert.deepEqual(documents, [{ key: "replace", fresh: true }]);
+    });
+
+    await t.test("requireMatch makes replace and upsert atomic must-exist mutations", async () => {
+      await database.execute("INSERT INTO required_matches", {
+        key: "existing",
+        stale: true,
+      });
+
+      const replaced = await database.execute(
+        "REPLACE INTO required_matches WHERE key = 'existing'",
+        { key: "existing", fresh: true },
+        { requireMatch: true },
+      );
+      const missed = await database.execute(
+        "UPSERT INTO required_matches WHERE key = 'missing'",
+        { key: "missing", inserted: false },
+        { requireMatch: true },
+      );
+
+      assert.equal(replaced.length, 1);
+      assert.deepEqual(missed, []);
+      assert.deepEqual(await database.execute("SELECT * FROM required_matches"), [
+        { key: "existing", fresh: true },
+      ]);
+      await assert.rejects(
+        database.execute("SELECT * FROM required_matches", [], { requireMatch: true }),
+        /requireMatch.*UPSERT INTO.*REPLACE INTO/i,
+      );
     });
 
     await t.test("UPSERT merges matches and inserts misses", async () => {
@@ -224,7 +268,7 @@ test("IDB public API contract", async (t) => {
         value: 3,
       });
 
-      const documents = await run("GET upsert_documents ORDER BY key");
+      const documents = await run("FIND upsert_documents ORDER BY key");
 
       assert.deepEqual(documents, [
         { key: "existing", preserved: true, value: 2 },
@@ -232,7 +276,7 @@ test("IDB public API contract", async (t) => {
       ]);
     });
 
-    await t.test("DELETE removes selected fields or complete documents", async () => {
+    await t.test("UNSET removes fields and DELETE removes complete documents", async () => {
       await run("INSERT INTO delete_documents", {
         key: "delete",
         keep: true,
@@ -240,13 +284,13 @@ test("IDB public API contract", async (t) => {
       });
 
       const fieldDeletion = await run(
-        "DELETE remove FROM delete_documents WHERE key = $key",
+        "UNSET remove FROM delete_documents WHERE key = $key",
         { $key: "delete" },
       );
 
       assert.equal(fieldDeletion.length, 1);
       assert.deepEqual(
-        await run("GET delete_documents WHERE key = $key", {
+        await run("FIND delete_documents WHERE key = $key", {
           $key: "delete",
         }),
         [{ key: "delete", keep: true }],
@@ -258,17 +302,83 @@ test("IDB public API contract", async (t) => {
       );
 
       assert.equal(documentDeletion.length, 1);
-      assert.deepEqual(await run("GET delete_documents"), []);
+      assert.deepEqual(await run("FIND delete_documents"), []);
     });
 
-    await t.test("close releases one project or all open handles", async () => {
-      await assert.doesNotReject(() => database.close(project));
+    await t.test("document selectors reject grouped mutation results", async () => {
+      await run("INSERT INTO selector_documents", { category: "one", value: 1 });
 
-      // A later operation lazily reopens the persisted project.
-      const documents = await run("GET envelopes");
-      assert.equal(documents.length, 1);
+      for (const statement of [
+        "FIND selector_documents GROUP BY category",
+        "UPDATE selector_documents GROUP BY category",
+        "UPSERT INTO selector_documents WHERE value > 0 GROUP BY category",
+        "REPLACE INTO selector_documents WHERE value > 0 HAVING COUNT(*) > 0",
+        "UNSET value FROM selector_documents GROUP BY category",
+        "DELETE FROM selector_documents HAVING COUNT(*) > 0",
+      ]) {
+        await assert.rejects(database.execute(statement, { updated: true }), /GROUP BY|HAVING.*SELECT/i);
+      }
 
-      await assert.doesNotReject(() => database.close());
+      assert.deepEqual(await run("FIND selector_documents"), [{ category: "one", value: 1 }]);
+    });
+
+    await t.test("removed statement aliases report their canonical replacements", async (t) => {
+      const cases = [
+        ["GET envelopes", /GET.*removed.*SELECT \* FROM/i],
+        ["COLLECT envelopes", /COLLECT.*removed.*SELECT \* FROM/i],
+        ["INSERT envelopes", /INSERT.*INTO/i],
+        ["UPSERT envelopes WHERE value = 1", /UPSERT INTO/i],
+        ["INSERT OR UPDATE INTO envelopes WHERE value = 1", /INSERT OR UPDATE.*UPSERT INTO/i],
+        ["INSERT OR REPLACE INTO envelopes WHERE value = 1", /INSERT OR REPLACE.*REPLACE INTO/i],
+        ["DELETE value FROM envelopes", /DELETE.*UNSET/i],
+        ["DELETE envelopes FROM envelopes", /DELETE FROM/i],
+        ["ON envelopes SELECT 1", /QUERY ON/i],
+      ];
+
+      for (const [statement, expected] of cases) {
+        await t.test(statement, async () => {
+          await assert.rejects(database.execute(statement), expected);
+        });
+      }
+    });
+
+    await t.test("removed project arguments fail with migration guidance", async () => {
+      await assert.rejects(
+        database.execute("legacy-project", "FIND envelopes"),
+        /execute.*no longer accepts a project/i,
+      );
+
+      const outcome = await database.run("legacy-project", "FIND envelopes");
+      assert.match(String(outcome.error), /run.*no longer accepts a project/i);
+      assert.equal(outcome.result, undefined);
+
+      const callbackError = await new Promise((resolve) => {
+        database.run("legacy-project", "FIND envelopes", [], (error, result) => {
+          resolve({ error, result });
+        });
+      });
+      assert.match(String(callbackError.error), /run.*no longer accepts a project/i);
+      assert.equal(callbackError.result, undefined);
+    });
+
+    await t.test("close rejects the removed project parameter without closing", async () => {
+      await assert.rejects(database.close("legacy-project"), /no longer accepts a project/i);
+      assert.equal((await database.execute("FIND envelopes")).length, 1);
+    });
+
+    await t.test("close is terminal and idempotent", async () => {
+      const firstClose = database.close();
+      const secondClose = database.close();
+      assert.equal(secondClose, firstClose);
+      await firstClose;
+
+      await assert.rejects(
+        database.execute("FIND envelopes"),
+        /closed/i,
+      );
+      const outcome = await database.run("FIND envelopes");
+      assert.match(String(outcome.error), /closed/i);
+      assert.equal(outcome.result, undefined);
     });
   } finally {
     await database.close().catch(() => {});

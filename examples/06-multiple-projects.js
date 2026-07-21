@@ -1,23 +1,23 @@
 import { createIdb } from 'node-idb'
 
-const database = createIdb({ storagePath: './.example-data/multiple-projects' })
+// The filename is retained for compatibility; this example now demonstrates
+// separate database instances instead of per-command project names.
+const databaseRoot = './.example-data/separate-databases'
+const development = createIdb({ storagePath: `${databaseRoot}/development` })
+const production = createIdb({ storagePath: `${databaseRoot}/production` })
 
 try {
-  await database.execute('development', 'INSERT INTO settings', {
+  await development.execute('INSERT INTO settings', {
     theme: 'dark',
     debug: true,
   })
-  await database.execute('production', 'INSERT INTO settings', {
+  await production.execute('INSERT INTO settings', {
     theme: 'light',
     debug: false,
   })
 
-  console.log('Development:', await database.execute('development', 'GET settings'))
-  console.log('Production:', await database.execute('production', 'GET settings'))
-
-  // Close only one project's open collection handles.
-  await database.close('development')
-  console.log('Reopened development:', await database.execute('development', 'GET settings'))
+  console.log('Development:', await development.execute('SELECT * FROM settings'))
+  console.log('Production:', await production.execute('SELECT * FROM settings'))
 } finally {
-  await database.close()
+  await Promise.all([development.close(), production.close()])
 }

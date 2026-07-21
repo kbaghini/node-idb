@@ -13,8 +13,8 @@ try {
     profile: { displayName: 'Ada', settings: { darkMode: true } },
   }
 
-  await database.execute('types', 'INSERT INTO documents', document)
-  const [loaded] = await database.execute('types', 'GET documents')
+  await database.execute('INSERT INTO documents', document)
+  const [loaded] = await database.execute('SELECT * FROM documents')
 
   console.log('Date:', loaded.createdAt instanceof Date, loaded.createdAt)
   console.log('BigInt:', typeof loaded.largeInteger, loaded.largeInteger)

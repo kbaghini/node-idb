@@ -68,16 +68,15 @@ test('opens and upgrades a populated legacy v0 database in place', async (contex
   await run(blobs, 'INSERT INTO tbl_blobs VALUES (?, ?, ?)', [3, Buffer.from('legacy-content'), 1])
   await close(blobs)
 
-  const idb = createIdb({ storagePath })
-  assert.deepEqual(await idb.execute('-system-', "get files where key='legacy-key'"), [
+  const idb = createIdb({ storagePath: projectDirectory })
+  assert.deepEqual(await idb.execute("find files where key='legacy-key'"), [
     { key: 'legacy-key', content: Buffer.from('legacy-content') },
   ])
   await idb.execute(
-    '-system-',
-    "insert or replace into files where key='legacy-key'",
+    "replace into files where key='legacy-key'",
     { key: 'legacy-key', content: Buffer.from('new-content'), zip: true },
   )
-  assert.deepEqual(await idb.execute('-system-', "get files where key='legacy-key'"), [
+  assert.deepEqual(await idb.execute("find files where key='legacy-key'"), [
     { key: 'legacy-key', content: Buffer.from('new-content'), zip: true },
   ])
   await idb.close()
@@ -86,7 +85,7 @@ test('opens and upgrades a populated legacy v0 database in place', async (contex
   const version = await new Promise((resolve, reject) => {
     reopened.get('PRAGMA user_version', (error, row) => error ? reject(error) : resolve(row.user_version))
   })
-  assert.equal(version, 3)
+  assert.equal(version, 5)
   await close(reopened)
 })
 
@@ -96,7 +95,7 @@ test('supports the legacy portal callback flow and fire-and-forget calls', async
   const idb = createIdb({ storagePath })
 
   const callbackResult = (statement, parameters) => new Promise((resolve, reject) => {
-    idb.run('-system-', statement, parameters, (error, result) => error ? reject(error) : resolve(result))
+    idb.run(statement, parameters, (error, result) => error ? reject(error) : resolve(result))
   })
 
   await callbackResult('insert into files', {
@@ -107,8 +106,8 @@ test('supports the legacy portal callback flow and fire-and-forget calls', async
     ext: '.js',
     rdate: 'old',
   })
-  await idb.run('-system-', "update files set rdate='new' where key='portal.js'")
-  assert.deepEqual(await callbackResult("get files where key='portal.js'"), [{
+  await idb.run("update files set rdate='new' where key='portal.js'")
+  assert.deepEqual(await callbackResult("find files where key='portal.js'"), [{
     key: 'portal.js',
     content: Buffer.from('source'),
     mtimeMs: 123,
@@ -116,8 +115,8 @@ test('supports the legacy portal callback flow and fire-and-forget calls', async
     ext: '.js',
     rdate: 'new',
   }])
-  await callbackResult("delete files from files where key='portal.js'")
-  assert.deepEqual(await callbackResult("get files where key='portal.js'"), [])
+  await callbackResult("delete from files where key='portal.js'")
+  assert.deepEqual(await callbackResult("find files where key='portal.js'"), [])
   await idb.close()
 })
 
@@ -128,14 +127,14 @@ test('serializes concurrent first-use writes across independent engine instances
   const second = createIdb({ storagePath })
 
   const inserts = Array.from({ length: 40 }, (_, index) =>
-    (index % 2 ? first : second).execute('shared', 'insert into events', {
+    (index % 2 ? first : second).execute('insert into events', {
       index,
       nested: { parity: index % 2 },
     }),
   )
   const ids = await Promise.all(inserts)
   assert.equal(new Set(ids).size, 40)
-  const rows = await first.execute('shared', 'select "index" from events order by "index"')
+  const rows = await first.execute('select "index" from events order by "index"')
   assert.deepEqual(rows.map((row) => row.index), Array.from({ length: 40 }, (_, index) => index))
   await Promise.all([first.close(), second.close()])
 })
