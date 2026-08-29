@@ -1,7 +1,12 @@
 // Compile-only public declaration contract. This file is checked by
 // `npm run test:types`; it is never executed.
 import { createIdb, inspectStorage, restoreBackup, verifyBackup } from '../src/index.js'
-import type { CollectionStructure, IdbFilesystemOptions, IdbOptions } from '../src/index.js'
+import type {
+  CollectionStructure,
+  IdbFilesystemOptions,
+  IdbOptions,
+  MutationRow,
+} from '../src/index.js'
 
 declare const dynamicPath: string
 createIdb({ storagePath: ':memory:' })
@@ -51,6 +56,11 @@ accepts({ storagePath: './configured', maxOpenCollections: 2 })
 const engine = createIdb({ storagePath: './typed-operations' })
 engine.execute('FIND records', [], { signal: new AbortController().signal, timeoutMs: 500 })
 engine.execute('REPLACE INTO records WHERE id=$id', { id: 1 }, { requireMatch: true })
+const reservation: Promise<MutationRow[]> = engine.execute<MutationRow[]>(
+  'INSERT IF ABSENT INTO records WHERE id=$id',
+  { id: 1 },
+)
+void reservation
 const streamed: AsyncIterable<{ id: number }> = engine.stream<{ id: number }>(
   'SELECT id FROM records',
   [],

@@ -6,6 +6,20 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-08-29
+
+### Added
+
+- Added `INSERT IF ABSENT INTO collection WHERE ...` for atomic cross-engine
+  reservations. It inserts one document on a miss, returns matching rows with
+  `existing: true` on a hit, and never overwrites an existing document.
+
+### Fixed
+
+- Allowed a writable storage catalog to wait briefly when another process is
+  between creating a new collection database and its deterministic blob peer.
+  Persistent one-sided pairs continue to fail as storage corruption.
+
 ## [0.2.0] - 2026-07-21
 
 ### Changed
@@ -178,7 +192,8 @@ All notable changes to this project are documented here. The format follows
 - Transactional multi-process writes and stable document snapshots.
 - Deterministic nested aliases and wildcard projections.
 
-[Unreleased]: https://github.com/kbaghini/node-idb/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/kbaghini/node-idb/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/kbaghini/node-idb/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/kbaghini/node-idb/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/kbaghini/node-idb/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/kbaghini/node-idb/releases/tag/v0.1.0

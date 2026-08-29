@@ -1098,6 +1098,24 @@ if (!replaced.length) console.log("The document no longer exists");
 cannot be silently ignored. It does not change the existing array-payload
 ambiguity: matched upsert/replace payloads must still be one non-array document.
 
+Use `INSERT IF ABSENT INTO ... WHERE ...` when several engines or processes may
+try to reserve the same logical key. Selection and insertion run inside one
+`BEGIN IMMEDIATE` mutation, so exactly one caller inserts the document. The
+winner receives `{ object_id, inserted: true }`; later callers receive the
+matching `{ object_id, existing: true }` rows and never overwrite them:
+
+```js
+const [reservation] = await database.execute(
+  "INSERT IF ABSENT INTO jobs WHERE key = $key",
+  { key: "daily-report", owner: process.pid },
+);
+
+if (reservation.inserted) console.log("This process owns the job");
+```
+
+The statement requires a `WHERE` selector and exactly one non-array document
+payload. As with other mutation selectors, `GROUP BY` and `HAVING` are rejected.
+
 ### `stream(statement, parameters?, options?)`
 
 Returns an `AsyncIterable` for projected rows or complete documents from
@@ -1419,6 +1437,7 @@ create a new instance to reopen the database.
 | Statement | Behavior | Result |
 | --- | --- | --- |
 | `INSERT INTO collection` | Inserts one payload, or a batch when the payload is an array | object ID, or an array of IDs |
+| `INSERT IF ABSENT INTO collection WHERE ...` | Atomically inserts one payload only when the selector has no match | `{ object_id, inserted? or existing? }[]` |
 | `SELECT * FROM collection ...` | Reconstructs complete typed documents | document array |
 | `SELECT fields FROM collection ...` | Projects structured objects/arrays, scalar fields, expressions, or aggregates | row array |
 | `FIND collection ...` | Compatibility spelling for `SELECT * FROM collection ...` during `0.x` | document array |
@@ -1649,6 +1668,12 @@ Writes use `BEGIN IMMEDIATE`, the configured busy timeout, an in-process queue,
 and a catalog refresh after acquiring the write lock. Read/modify/write
 operations are one transaction, and multi-query document reads use a stable
 snapshot.
+
+During first use, SQLite creates the main collection file before attaching its
+blob peer. If another process observes that short-lived one-sided state while
+opening the same writable collection, the storage catalog waits briefly for
+the deterministic pair to complete. A pair that remains incomplete is still
+reported as corruption and is never silently repaired or overwritten.
 
 Common scalar equality, range, `IN`, `BETWEEN`, `LIKE`, and `GLOB` predicates
 can use optional per-field indexes when the persisted `fieldIndexes` policy

@@ -5,12 +5,15 @@ import {
   mkdir as makeDirectory,
   readdir as readDirectory,
 } from 'node:fs/promises'
+import { setTimeout as delay } from 'node:timers/promises'
 import path from 'node:path'
 
 const databasePrefix = 'db-collection-'
 const blobPrefix = 'db-blobs-'
 const databaseSuffix = '.sqlite'
 const collectionPattern = /^(?=.{1,128}$)(?=.*[A-Za-z0-9_])[A-Za-z0-9_-]+$/
+const concurrentPairWaitMs = 2_000
+const concurrentPairPollMs = 20
 /** @type {Map<string, { catalog: StorageCatalog, references: number }>} */
 const sharedCatalogs = new Map()
 
@@ -237,6 +240,38 @@ export class StorageCatalog {
   }
 
   /**
+   * A different process can be between SQLite creating the main collection
+   * file and ATTACH creating its blob peer. Wait briefly for that deterministic
+   * pair to become complete; a file which remains one-sided is still rejected
+   * as corruption rather than silently repaired.
+   * Call only while queued.
+   *
+   * @param {string} identity
+   * @param {StorageCatalogError} initialError
+   * @returns {Promise<CollectionFilePair | null>}
+   */
+  async waitForConcurrentPair(identity, initialError) {
+    const deadline = Date.now() + concurrentPairWaitMs
+    let orphanError = initialError
+    while (Date.now() < deadline) {
+      await delay(concurrentPairPollMs)
+      await this.scan()
+      try {
+        return this.pairFromEntry(identity, this.entries.get(identity))
+      } catch (error) {
+        if (
+          !(error instanceof StorageCatalogError) ||
+          error.code !== 'IDB_ORPHANED_COLLECTION_FILES'
+        ) {
+          throw error
+        }
+        orphanError = error
+      }
+    }
+    throw orphanError
+  }
+
+  /**
    * @param {string} identity
    * @param {CatalogEntry | undefined} entry
    * @returns {CollectionFilePair | null}
@@ -367,7 +402,19 @@ export class StorageCatalog {
 
     return this.enqueue(async () => {
       await this.ensureLoaded()
-      const existing = this.pairFromEntry(identity, this.entries.get(identity))
+      let existing
+      try {
+        existing = this.pairFromEntry(identity, this.entries.get(identity))
+      } catch (error) {
+        if (
+          !create ||
+          !(error instanceof StorageCatalogError) ||
+          error.code !== 'IDB_ORPHANED_COLLECTION_FILES'
+        ) {
+          throw error
+        }
+        existing = await this.waitForConcurrentPair(identity, error)
+      }
       if (existing) {
         if (await this.inspectPair(identity, existing) === 'missing') {
           throw this.missingPairError(identity, existing)

@@ -629,6 +629,29 @@ export function createIdb(options) {
     }, signal)
   }
 
+  /** Atomically inserts one document only when its WHERE selector has no match. */
+  async function insertIfAbsent(statement, parameters, signal) {
+    const remainder = statement.replace(/^\s*insert\s+if\s+absent\s+into\s+/i, '')
+    const collectionMatch = new RegExp(`^(${identifierPattern})([\\s\\S]*)$`, 'i').exec(remainder.trim())
+    if (!collectionMatch) throw new Error('A collection is required after INSERT IF ABSENT INTO')
+    const collection = cleanIdentifier(collectionMatch[1])
+    const filter = collectionMatch[2].trim()
+    if (!/^where\b/i.test(filter)) {
+      throw new Error('INSERT IF ABSENT INTO requires a WHERE clause')
+    }
+    if (Array.isArray(parameters)) {
+      throw new TypeError('INSERT IF ABSENT INTO requires one payload document, not an array')
+    }
+    assertDocumentSelector(`SELECT object_id FROM ${collectionMatch[1]} ${filter}`, 'INSERT IF ABSENT INTO')
+    const selector = await parseSql(`SELECT object_id FROM ${collectionMatch[1]} ${filter}`)
+    return withStore(collection, (store) => store.mutate(async () => {
+      const objectIds = await selectObjectIds(store, selector, parameters)
+      if (objectIds.length) return objectIds.map((object_id) => ({ object_id, existing: true }))
+      const [object_id] = await store.writeDocumentsInTransaction([parameters])
+      return [{ object_id, inserted: true }]
+    }, { signal }), signal)
+  }
+
   /**
    * @param {string} statement
    * @param {unknown} parameters
@@ -858,7 +881,7 @@ export function createIdb(options) {
     const normalized = statement.trimStart()
     if (
       mode === 'readonly' &&
-      /^(?:replace\s+into|upsert\s+into|insert\s+into|update\b|delete\s+from|unset\b)/i
+      /^(?:replace\s+into|upsert\s+into|insert(?:\s+if\s+absent)?\s+into|update\b|delete\s+from|unset\b)/i
         .test(normalized)
     ) {
       throw new Error('IDB engine is read-only; mutation statements are not allowed')
@@ -873,6 +896,9 @@ export function createIdb(options) {
     }
     if (/^upsert\s+into\b/i.test(normalized)) {
       return upsert(normalized, parameters, 'update', signal, requireMatch)
+    }
+    if (/^insert\s+if\s+absent\s+into\b/i.test(normalized)) {
+      return insertIfAbsent(normalized, parameters, signal)
     }
     if (/^insert\s+into\b/i.test(normalized)) return insert(normalized, parameters, signal)
     if (/^select\b/i.test(normalized)) return select(normalized, parameters, signal)

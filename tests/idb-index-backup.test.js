@@ -760,7 +760,10 @@ test('backups remain internally consistent while another engine writes large val
         payload: payload(version),
       })
       completedWrites = version
-      await delay(5)
+      // Leave a deterministic reader window so the test proves concurrent
+      // consistency without allowing a fast writer to starve the backup until
+      // its busy timeout on slower or heavily loaded runners.
+      await delay(25)
     }
   })()
 

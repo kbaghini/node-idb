@@ -264,6 +264,36 @@ test('serializes cross-engine merge updates and miss-path upserts', async (conte
   }])
 })
 
+test('INSERT IF ABSENT is atomic across independent engines and never overwrites', async (context) => {
+  const storagePath = await mkdtemp(path.join(os.tmpdir(), 'node-idb-insert-if-absent-'))
+  const first = createIdb({ storagePath, busyTimeoutMs: 30_000, fieldIndexes: 'none' })
+  const second = createIdb({ storagePath, busyTimeoutMs: 30_000, fieldIndexes: 'none' })
+  context.after(async () => {
+    await Promise.allSettled([first.close(), second.close()])
+    await rm(storagePath, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
+  })
+
+  const results = await Promise.all([
+    first.execute(
+      'INSERT IF ABSENT INTO reservations WHERE id = $id',
+      { id: 'same', owner: 'first' },
+    ),
+    second.execute(
+      'INSERT IF ABSENT INTO reservations WHERE id = $id',
+      { id: 'same', owner: 'second' },
+    ),
+  ])
+
+  assert.equal(results.flat().filter((row) => row.inserted).length, 1)
+  assert.equal(results.flat().filter((row) => row.existing).length, 1)
+  const rows = await first.execute(
+    'SELECT * FROM reservations WHERE id = $id',
+    { id: 'same' },
+  )
+  assert.equal(rows.length, 1)
+  assert.equal(['first', 'second'].includes(rows[0].owner), true)
+})
+
 test('rejects ambiguous array payloads for matched mutations without data loss', async (context) => {
   const { database } = await fixture(context)
   const original = { key: 'matched', preserved: true }

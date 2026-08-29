@@ -106,6 +106,45 @@ test("IDB public API contract", async (t) => {
       );
     });
 
+    await t.test("INSERT IF ABSENT inserts a miss and preserves an existing match", async () => {
+      const inserted = await database.execute(
+        "INSERT IF ABSENT INTO reservations WHERE key = $key",
+        { key: "shared", owner: "first" },
+      );
+      const existing = await database.execute(
+        "INSERT IF ABSENT INTO reservations WHERE key = $key",
+        { key: "shared", owner: "second" },
+      );
+
+      assert.equal(inserted.length, 1);
+      assert.equal(inserted[0].inserted, true);
+      assert.equal(existing.length, 1);
+      assert.equal(existing[0].existing, true);
+      assert.equal(existing[0].object_id, inserted[0].object_id);
+      assert.deepEqual(await database.execute("FIND reservations"), [
+        { key: "shared", owner: "first" },
+      ]);
+
+      await assert.rejects(
+        database.execute("INSERT IF ABSENT INTO reservations", { key: "missing-filter" }),
+        /requires a WHERE clause/i,
+      );
+      await assert.rejects(
+        database.execute(
+          "INSERT IF ABSENT INTO reservations WHERE key = 'array'",
+          [{ key: "array" }],
+        ),
+        /one payload document|not an array/i,
+      );
+      await assert.rejects(
+        database.execute(
+          "INSERT IF ABSENT INTO reservations WHERE key = 'grouped' GROUP BY key",
+          { key: "grouped" },
+        ),
+        /GROUP BY|grouped/i,
+      );
+    });
+
     await t.test("FIND reconstructs complete documents", async () => {
       await run("INSERT INTO retrieval_documents", [
         { key: "a", value: 1 },

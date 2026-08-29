@@ -12,7 +12,7 @@ test('one package publishes both the core API and Studio', async () => {
   )
 
   assert.equal(manifest.name, 'node-idb')
-  assert.equal(manifest.version, '0.2.0')
+  assert.equal(manifest.version, '0.3.0')
   assert.equal(manifest.bin['node-idb'], 'bin/node-idb.js')
   assert.equal(manifest.exports['.'].import, './src/index.js')
   assert.equal(manifest.exports['./studio'].import, './src/studio/index.js')

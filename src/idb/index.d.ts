@@ -361,6 +361,7 @@ export interface StorageInspection {
 export interface MutationRow {
   object_id: number;
   inserted?: true;
+  existing?: true;
 }
 
 export type IdbOutcome<TResult> =

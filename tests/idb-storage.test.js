@@ -161,6 +161,26 @@ test('orphaned collection and blob files fail safely in writable and read-only m
   }
 })
 
+test('writable catalog waits for another process to finish a new main/blob pair', async (context) => {
+  const storagePath = await mkdtemp(path.join(os.tmpdir(), 'node-idb-storage-race-'))
+  context.after(() => rm(storagePath, { recursive: true, force: true }))
+  const databasePath = path.join(storagePath, 'db-collection-shared.sqlite')
+  const blobPath = path.join(storagePath, 'db-blobs-shared.sqlite')
+
+  await writeFile(databasePath, '')
+  const catalog = new StorageCatalog(storagePath)
+  const resolution = catalog.resolvePair('shared', { create: true })
+  const completion = setTimeout(() => {
+    writeFile(blobPath, '').catch(() => {})
+  }, 50)
+  context.after(() => clearTimeout(completion))
+
+  const pair = await resolution
+  assert.equal(pair.existing, true)
+  assert.equal(pair.databasePath, databasePath)
+  assert.equal(pair.blobPath, blobPath)
+})
+
 test('refreshed listings discover new pairs and validate backup input', async (context) => {
   const storagePath = await mkdtemp(path.join(os.tmpdir(), 'node-idb-catalog-refresh-'))
   context.after(() => rm(storagePath, { recursive: true, force: true }))

@@ -382,6 +382,7 @@ test('readonly mode rejects every public mutation command and preserves data', a
   const database = createIdb({ storagePath, mode: 'readonly' })
   const mutations = [
     ['INSERT INTO immutable_docs', { key: 'inserted', value: 2 }],
+    ['INSERT IF ABSENT INTO immutable_docs WHERE key=$key', { key: 'inserted', value: 2 }],
     ["UPDATE immutable_docs SET value=2 WHERE key='stable'", undefined],
     ['UPSERT INTO immutable_docs WHERE key=$key', { key: 'stable', value: 3 }],
     ['REPLACE INTO immutable_docs WHERE key=$key', { key: 'stable', value: 4 }],
