@@ -39,6 +39,8 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- Shortened the npm README into an overview with runnable quick starts; moved
+  detailed API, storage, and operational documentation to `docs/GUIDE.md`.
 - Encode and write large document batches in bounded groups within one atomic
   transaction, reducing transient memory at the cost of more SQL batches.
 

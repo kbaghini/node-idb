@@ -1,5 +1,7 @@
 # Examples
 
+[Package overview](../README.md) · [API reference](../docs/GUIDE.md#public-api) · [Studio guide](../docs/STUDIO.md)
+
 Start with one of these two tiny examples:
 
 ```bash

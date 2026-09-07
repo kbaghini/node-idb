@@ -1,5 +1,7 @@
 # node-idb Studio guide
 
+[Package overview](../README.md) · [Technical guide](GUIDE.md) · [Examples](../examples/README.md)
+
 Studio is the local browser interface included with `node-idb`. One install
 provides both entry points:
 
