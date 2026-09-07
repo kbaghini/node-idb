@@ -1,4 +1,19 @@
 const MAX_TIMEOUT_MS = 2_147_483_647;
+// Collection queues allow only one operation to own a connection at a time.
+const databaseScopes = new WeakMap();
+
+export function checkDatabaseCancellation(database) {
+  throwIfAborted(databaseScopes.get(database)?.signal);
+}
+
+// Cancellation is accepted until COMMIT is dispatched. Once dispatched, report
+// SQLite's commit outcome, even if a deadline expires while it completes.
+export async function commitWithCancellationBoundary(database, commit) {
+  const scope = databaseScopes.get(database);
+  throwIfAborted(scope?.signal);
+  if (scope) scope.commitStarted = true;
+  return commit();
+}
 
 export function validateAbortSignal(signal, label = 'signal') {
   if (
@@ -84,8 +99,11 @@ export function createOperationScope(options = {}) {
 
 export async function withDatabaseInterrupt(database, signal, operation) {
   throwIfAborted(signal);
+  const scope = { signal, commitStarted: false };
+  databaseScopes.set(database, scope);
 
   const interrupt = () => {
+    if (scope.commitStarted) return;
     try {
       database.interrupt()
     } catch {
@@ -96,12 +114,13 @@ export async function withDatabaseInterrupt(database, signal, operation) {
 
   try {
     const result = await operation();
-    throwIfAborted(signal);
+    if (!scope.commitStarted) throwIfAborted(signal);
     return result;
   } catch (error) {
-    if (signal?.aborted) throw abortError(signal);
+    if (signal?.aborted && !scope.commitStarted) throw abortError(signal);
     throw error;
   } finally {
     signal?.removeEventListener('abort', interrupt);
+    databaseScopes.delete(database);
   }
 }

@@ -10,6 +10,10 @@ import type {
 
 declare const dynamicPath: string
 createIdb({ storagePath: ':memory:' })
+createIdb({ storagePath: ':memory:', sqliteCache: { mainKiB: 1024, mmapBytes: 0 } })
+createIdb({ storagePath: './data', mode: 'readonly', sqliteCache: { blobKiB: 512 } })
+// @ts-expect-error Cache budgets are numeric.
+createIdb({ storagePath: ':memory:', sqliteCache: { mainKiB: '1024' } })
 createIdb({ storagePath: './data', maxOpenCollections: 2 })
 createIdb({ storagePath: './data', mode: 'readonly', maxOpenCollections: 2 })
 createIdb({ storagePath: dynamicPath, fieldIndexes: 'none' })

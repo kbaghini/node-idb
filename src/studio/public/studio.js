@@ -60,6 +60,7 @@ const elements = Object.fromEntries(
     "parameters-guide",
     "format-query",
     "run-query",
+    "cancel-query",
     "builder-fields",
     "builder-filter-field",
     "builder-operator",
@@ -117,7 +118,21 @@ const app = {
   selectionVersion: 0,
   schemaRequestVersion: 0,
   documentRequestVersion: 0,
+  readRequests: new Map(),
 };
+
+function beginReadRequest(key) {
+  app.readRequests.get(key)?.abort();
+  const controller = new AbortController();
+  app.readRequests.set(key, controller);
+  return controller;
+}
+
+function finishReadRequest(key, controller) {
+  if (app.readRequests.get(key) !== controller) return false;
+  app.readRequests.delete(key);
+  return true;
+}
 
 function readLaunchToken() {
   const params = new URLSearchParams(window.location.hash.slice(1));
@@ -169,17 +184,19 @@ function setConnection(status, message) {
   elements["footer-status"].textContent = message;
 }
 
+const buttonContents = new WeakMap();
+
 function setButtonBusy(button, busy, busyLabel) {
   if (!button) return;
   if (busy) {
-    button.dataset.originalLabel = button.textContent;
+    if (!buttonContents.has(button)) buttonContents.set(button, [...button.childNodes]);
     button.disabled = true;
     if (busyLabel) button.textContent = busyLabel;
   } else {
     button.disabled = false;
-    if (button.dataset.originalLabel) {
-      button.textContent = button.dataset.originalLabel;
-      delete button.dataset.originalLabel;
+    if (buttonContents.has(button)) {
+      button.replaceChildren(...buttonContents.get(button));
+      buttonContents.delete(button);
     }
   }
 }
@@ -421,8 +438,43 @@ function wireToEditorText(node) {
 }
 
 function wirePreview(node, maxLength = 220) {
-  const text = JSON.stringify(wireToFriendly(ensureWireNode(node)));
-  return text.length > maxLength ? `${text.slice(0, maxLength - 1)}\u2026` : text;
+  // Preview only the visible prefix; never stringify a complete multi-MiB row
+  // just to display its first 220 characters.
+  let text = "";
+  let truncated = false;
+  let visited = 0;
+  const append = (value) => {
+    const remaining = maxLength - text.length;
+    if (value.length > remaining) truncated = true;
+    text += value.slice(0, Math.max(0, remaining));
+  };
+  const quoted = (value) => {
+    const source = String(value);
+    if (source.length > maxLength) truncated = true;
+    return JSON.stringify(source.slice(0, maxLength));
+  };
+  const visit = (wire, depth) => {
+    if (text.length >= maxLength) { truncated = true; return; }
+    if (++visited > 100 || depth > 12) { append("…"); return; }
+    const [tag, value] = ensureWireNode(wire);
+    if (tag === "object" || tag === "array") {
+      append(tag === "object" ? "{" : "[");
+      for (let index = 0; index < value.length; index++) {
+        if (text.length >= maxLength || visited > 100) { truncated = true; break; }
+        if (index) append(",");
+        if (tag === "object") {
+          append(`${quoted(value[index][0])}:`);
+          visit(value[index][1], depth + 1);
+        } else visit(value[index], depth + 1);
+      }
+      append(tag === "object" ? "}" : "]");
+    } else if (tag === "string") append(quoted(value));
+    else if (tag === "binary") append(quoted(`<binary: ${String(value).length} base64 characters>`));
+    else if (tag === "bigint") append(quoted(`${String(value).slice(0, maxLength)}n`));
+    else append(JSON.stringify(wireToFriendly(wire)) ?? "undefined");
+  };
+  visit(ensureWireNode(node), 0);
+  return truncated ? `${text.slice(0, maxLength - 1)}…` : text;
 }
 
 function normalizeState(payload) {
@@ -465,6 +517,7 @@ function renderConnectionState() {
   const writable = app.state?.writable === true;
   elements["mode-badge"].textContent = writable ? "writes enabled" : "read only";
   elements["mode-badge"].classList.toggle("is-writable", writable);
+  elements["mode-badge"].title = `node-idb ${app.state?.version || ""}`.trim();
   for (const item of document.querySelectorAll(".write-only")) {
     if (item.classList.contains("tab-panel")) item.hidden = !writable || !item.classList.contains("is-active");
     else item.hidden = !writable;
@@ -603,6 +656,8 @@ async function loadState({ preserveSelection = true } = {}) {
   setConnection("loading", "Connecting");
   try {
     const payload = await api("/api/state");
+    for (const controller of app.readRequests.values()) controller.abort();
+    app.selectionVersion++;
     const previousDatabase = preserveSelection ? app.selectedDatabaseId : null;
     const previousCollection = preserveSelection ? app.selectedCollection : null;
     const previousCatalogVersion = app.state?.catalogVersion;
@@ -659,6 +714,7 @@ async function refreshDiscovery() {
 }
 
 async function selectCollection(databaseId, collectionName, { updateNavigator = true } = {}) {
+  for (const controller of app.readRequests.values()) controller.abort();
   if (app.selectedDatabaseId !== databaseId || app.selectedCollection !== collectionName) {
     clearWriteTargets({ resetEditor: true });
   }
@@ -670,6 +726,11 @@ async function selectCollection(databaseId, collectionName, { updateNavigator = 
   app.schema = null;
   app.schemaFields = [];
   app.diagnostics = null;
+  elements["diagnostic-metrics"].replaceChildren();
+  elements["diagnostics-json"].textContent = "Choose Load diagnostics to inspect this database.";
+  elements["query-results"].replaceChildren();
+  elements["query-result-title"].textContent = "Query results";
+  elements["query-timing"].textContent = "";
   if (updateNavigator) renderNavigator();
   updateContext();
   const collection = getSelectedCollectionInfo();
@@ -722,6 +783,7 @@ async function loadDocuments(expectedSelectionVersion = app.selectionVersion) {
     order: elements["document-order"].value,
   };
   const requestVersion = ++app.documentRequestVersion;
+  const controller = beginReadRequest("documents");
   elements["reload-documents"].disabled = true;
   elements["document-table"].hidden = false;
   elements["browse-empty"].hidden = true;
@@ -731,18 +793,20 @@ async function loadDocuments(expectedSelectionVersion = app.selectionVersion) {
     ]),
   );
   try {
-    const result = normalizeDocumentList(await api("/api/documents/list", { method: "POST", body }));
+    const result = normalizeDocumentList(await api("/api/documents/list", { method: "POST", body, signal: controller.signal }));
     if (expectedSelectionVersion !== app.selectionVersion || requestVersion !== app.documentRequestVersion) return;
     app.documents = result.documents;
     app.total = result.total;
     app.hasMore = result.hasMore;
     renderDocuments();
   } catch (error) {
+    if (controller.signal.aborted) return;
     if (expectedSelectionVersion !== app.selectionVersion || requestVersion !== app.documentRequestVersion) return;
     app.documents = [];
     renderBrowseEmpty("Documents could not be loaded", errorMessage(error));
     toast("Browse failed", errorMessage(error), "error");
   } finally {
+    finishReadRequest("documents", controller);
     if (requestVersion === app.documentRequestVersion) elements["reload-documents"].disabled = false;
   }
 }
@@ -852,7 +916,10 @@ function appendWireNode(container, node, key, depth, budget) {
     );
     container.append(line);
     const branch = createElement("div", { className: "tree-branch" });
-    for (const [childKey, child] of entries) appendWireNode(branch, child, childKey, depth + 1, budget);
+    for (const [childKey, child] of entries) {
+      appendWireNode(branch, child, childKey, depth + 1, budget);
+      if (budget.exhausted) break;
+    }
     branch.append(createElement("div", { className: "tree-line tree-punctuation", text: tag === "object" ? "}" : "]" }));
     container.append(branch);
     return;
@@ -891,10 +958,11 @@ async function loadSchema(
 ) {
   if (!app.selectedDatabaseId || !app.selectedCollection) return;
   const requestVersion = ++app.schemaRequestVersion;
+  const controller = beginReadRequest("schema");
   const path = `/api/databases/${encodeURIComponent(app.selectedDatabaseId)}/collections/${encodeURIComponent(app.selectedCollection)}/schema${details ? "" : "?summary=1"}`;
   elements["reload-structure"].disabled = true;
   try {
-    const payload = unwrapPayload(await api(path)) || {};
+    const payload = unwrapPayload(await api(path, { signal: controller.signal })) || {};
     if (expectedSelectionVersion !== app.selectionVersion || requestVersion !== app.schemaRequestVersion) return;
     const rawFields = Array.isArray(payload) ? payload : payload.fields || payload.schema || [];
     app.schema = normalizeSchema(payload, rawFields);
@@ -904,11 +972,13 @@ async function loadSchema(
       .filter((field, index, all) => all.indexOf(field) === index)
       .sort((left, right) => left.localeCompare(right));
   } catch (error) {
+    if (controller.signal.aborted) return;
     if (expectedSelectionVersion !== app.selectionVersion || requestVersion !== app.schemaRequestVersion) return;
     app.schema = null;
     app.schemaFields = [];
     toast("Schema unavailable", errorMessage(error), "error");
   } finally {
+    finishReadRequest("schema", controller);
     if (expectedSelectionVersion === app.selectionVersion && requestVersion === app.schemaRequestVersion) {
       elements["reload-structure"].disabled = false;
     }
@@ -1235,14 +1305,17 @@ async function runQuery() {
     toast("Invalid parameters", errorMessage(error), "error");
     return;
   }
+  const controller = beginReadRequest("query");
   setButtonBusy(elements["run-query"], true, "Running\u2026");
+  elements["cancel-query"].hidden = false;
   const started = performance.now();
   try {
     const payload = unwrapPayload(await api("/api/query", {
       method: "POST",
       body: { databaseId, statement, parameters },
+      signal: controller.signal,
     })) || {};
-    if (selectionVersion !== app.selectionVersion || databaseId !== app.selectedDatabaseId) return;
+    if (controller.signal.aborted || selectionVersion !== app.selectionVersion || databaseId !== app.selectedDatabaseId) return;
     const encodedRows = Array.isArray(payload) ? payload : payload.rows || payload.results || [];
     const rows = isWireNode(encodedRows) && encodedRows[0] === "array" ? encodedRows[1] : encodedRows;
     if (!Array.isArray(rows)) throw new Error("The Studio returned an invalid query result.");
@@ -1254,6 +1327,13 @@ async function runQuery() {
     });
   } catch (error) {
     if (selectionVersion !== app.selectionVersion || databaseId !== app.selectedDatabaseId) return;
+    if (controller.signal.aborted) {
+      if (app.readRequests.get("query") === controller) {
+        elements["query-result-title"].textContent = "Query cancelled";
+        elements["query-timing"].textContent = "";
+      }
+      return;
+    }
     elements["query-result-title"].textContent = "Query failed";
     elements["query-timing"].textContent = "";
     elements["query-results"].replaceChildren(
@@ -1264,7 +1344,10 @@ async function runQuery() {
     );
     toast("Query failed", errorMessage(error), "error");
   } finally {
-    setButtonBusy(elements["run-query"], false);
+    if (finishReadRequest("query", controller)) {
+      setButtonBusy(elements["run-query"], false);
+      elements["cancel-query"].hidden = true;
+    }
   }
 }
 
@@ -1282,12 +1365,19 @@ function renderQueryResults(rows, metadata) {
     return;
   }
   rows.forEach((row, index) => {
-    elements["query-results"].append(
-      createElement("div", { className: "result-item" }, [
+    const details = createElement("details", { className: "result-item" }, [
+      createElement("summary", {}, [
         createElement("span", { className: "result-index", text: index + 1 }),
-        renderWireTree(row),
+        createElement("code", { className: "document-preview", text: wirePreview(row) }),
       ]),
-    );
+    ]);
+    let rendered = false;
+    details.addEventListener("toggle", () => {
+      if (!details.open || rendered) return;
+      details.append(renderWireTree(row));
+      rendered = true;
+    });
+    elements["query-results"].append(details);
   });
 }
 
@@ -1528,13 +1618,16 @@ function renderDiagnostics(report) {
     ["Active operations", engine.operations?.active, "count"],
     ["Schema version", engine.schemaVersion, "text"],
     ["Engine mode", engine.mode, "text"],
+    ["Main cache / collection", engine.sqliteCache?.mainKiB * 1024, "bytes"],
+    ["Blob cache / collection", engine.sqliteCache?.blobKiB * 1024, "bytes"],
+    ["Main mapping limit", engine.sqliteCache?.mmapBytes, "bytes"],
   ];
   for (const [label, value, kind] of metrics) {
     elements["diagnostic-metrics"].append(
       createElement("article", { className: "metric-card" }, [
         createElement("span", { text: label }),
         createElement("strong", { text: formatMetric(value, kind) }),
-        createElement("small", { text: value === null || value === undefined ? "Not reported" : "Current session" }),
+        createElement("small", { text: value === null || value === undefined ? "Not reported" : label.includes("cache /") || label.includes("mapping") ? "Configured limit, not measured usage" : "Current session" }),
       ]),
     );
   }
@@ -1547,16 +1640,18 @@ async function loadDiagnostics() {
   }
   const databaseId = app.selectedDatabaseId;
   const selectionVersion = app.selectionVersion;
+  const controller = beginReadRequest("diagnostics");
   setButtonBusy(elements["load-diagnostics"], true, "Loading\u2026");
   try {
-    const payload = unwrapPayload(await api(`/api/databases/${encodeURIComponent(databaseId)}/diagnostics`));
+    const payload = unwrapPayload(await api(`/api/databases/${encodeURIComponent(databaseId)}/diagnostics`, { signal: controller.signal }));
     if (selectionVersion !== app.selectionVersion || databaseId !== app.selectedDatabaseId) return;
     app.diagnostics = payload || {};
     renderDiagnostics(app.diagnostics);
   } catch (error) {
+    if (controller.signal.aborted || selectionVersion !== app.selectionVersion) return;
     toast("Diagnostics failed", errorMessage(error), "error");
   } finally {
-    setButtonBusy(elements["load-diagnostics"], false);
+    if (finishReadRequest("diagnostics", controller)) setButtonBusy(elements["load-diagnostics"], false);
   }
 }
 
@@ -1581,7 +1676,7 @@ async function runMaintenance(endpoint, button, label) {
 function attachEvents() {
   elements["refresh-button"].addEventListener("click", refreshDiscovery);
   elements["navigator-filter"].addEventListener("input", renderNavigator);
-  elements["reload-documents"].addEventListener("click", loadDocuments);
+  elements["reload-documents"].addEventListener("click", () => loadDocuments());
   elements["reload-structure"].addEventListener("click", () => loadSchema(app.selectionVersion, { details: true }));
   elements["structure-tree-mode"].addEventListener("click", () => setStructureView("tree"));
   elements["structure-list-mode"].addEventListener("click", () => setStructureView("list"));
@@ -1616,6 +1711,7 @@ function attachEvents() {
     elements["query-editor"].value = formatQueryText(elements["query-editor"].value);
   });
   elements["run-query"].addEventListener("click", runQuery);
+  elements["cancel-query"].addEventListener("click", () => app.readRequests.get("query")?.abort());
   elements["build-query"].addEventListener("click", buildQuery);
   elements["reset-builder"].addEventListener("click", resetBuilder);
   elements["builder-operator"].addEventListener("change", () => {

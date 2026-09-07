@@ -281,6 +281,8 @@ test('startStudio validates configuration before listening', async () => {
     [{ rootPath: '.', maxRows: 0 }, /maxRows.*integer.*1/i],
     [{ rootPath: '.', queryTimeoutMs: 0 }, /queryTimeoutMs.*integer.*1/i],
     [{ rootPath: '.', bodyLimitBytes: 0 }, /bodyLimitBytes.*integer.*1/i],
+    [{ rootPath: '.', sqliteCache: { mainKiB: 0 } }, /sqliteCache/i],
+    [{ rootPath: '.', maxOpenCollections: 0 }, /maxOpenCollections/i],
     [{ rootPath: '.', host: '0.0.0.0' }, /unknown.*host/i],
   ]
 
@@ -290,6 +292,22 @@ test('startStudio validates configuration before listening', async () => {
       expected,
     )
   }
+})
+
+test('Studio exposes configured cache budgets and package version in readonly mode', async (t) => {
+  const fixture = await createFixture(t, 'node-idb-studio-cache-')
+  await writeDocuments(fixture.rootPath, 'records', [{ id: 1 }])
+  const sqliteCache = { mainKiB: 1024, blobKiB: 512, mmapBytes: 0 }
+  const studio = await fixture.start({ sqliteCache, maxOpenCollections: 2 })
+  const state = await jsonResponse(await request(studio, '/api/state'))
+  assert.match(state.version, /^\d+\.\d+\.\d+/)
+  const database = databaseWithCollection(state, 'records')
+  const response = await request(studio, `/api/databases/${database.id}/diagnostics`)
+  assert.equal(response.status, 200)
+  const diagnostics = await jsonResponse(response)
+  assert.equal(diagnostics.engine.mode, 'readonly')
+  assert.equal(diagnostics.engine.cache.limit, 2)
+  assert.deepEqual(diagnostics.engine.sqliteCache, sqliteCache)
 })
 
 test('Studio is loopback-only, token-protected, origin-bound, and closes cleanly', async (t) => {

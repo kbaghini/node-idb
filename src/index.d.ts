@@ -49,4 +49,5 @@ export type {
   StorageStats,
   StorageInspection,
   StreamOptions,
+  SqliteCacheOptions,
 } from './idb/index.js';

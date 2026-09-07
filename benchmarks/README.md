@@ -1,13 +1,15 @@
 # node-idb benchmarks
 
 This directory contains a deterministic benchmark harness for measuring changes
-to node-idb. It exercises five separate phases:
+to node-idb. It exercises seven separate phases:
 
 1. batched document insertion;
 2. indexed point queries;
 3. ordered range queries;
 4. key-selected document updates; and
-5. queries that cycle through enough collections to exercise the open-store
+5. a full-document ordered stream, verifying every row;
+6. a writer queued behind a slow stream on the same engine and collection; and
+7. queries that cycle through enough collections to exercise the open-store
    cache.
 
 The generated documents and every query target are derived from a fixed seed.
@@ -78,6 +80,28 @@ These options are part of the `0.2` instance-scoped API and are included in the
 published package.
 
 ## JSON reports
+
+Report format version 2 adds `stream` and `slowReaderWriter` phases plus
+process-memory samples for every phase. RSS, heap, external memory, and array
+buffers are sampled every 10 ms, including a baseline and an end sample.
+`sampledPeakBytes` is an estimate and may miss short-lived peaks; it includes
+all memory in the benchmark process, including generated input documents and
+phase setup. It is not an allocation count or a hard memory ceiling.
+
+The stream phase includes `firstRowMs`; the slow-reader phase includes
+`writeDurationMs` from submission through completion. The latter uses a
+one-row stream batch and a configurable per-row delay. It measures contention
+within one engine, not a separate-process or separate-host writer. Each of
+these phases has one latency sample; repeat runs to compare distributions.
+
+```sh
+node benchmarks/run.js --preset standard --stream-batch-size 100 --slow-reader-rows 200 --slow-reader-delay-ms 2
+node benchmarks/run.js --main-cache-kib 4096 --blob-cache-kib 2048 --mmap-bytes 0
+```
+
+Use a larger `--insert-batch-size` to measure transient memory during large
+atomic writes. Compare multiple fresh processes with the same workload and
+database settings; do not compare one run's RSS against another phase's heap.
 
 Use JSON on standard output for CI or another analysis tool:
 

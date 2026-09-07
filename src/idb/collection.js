@@ -18,7 +18,8 @@ import {
   transaction,
 } from './database.js'
 import { deserializeFieldIndexes } from './field-indexes.js'
-import { throwIfAborted, withDatabaseInterrupt } from './operation.js'
+import { normalizeSqliteCache } from './cache-options.js'
+import { checkDatabaseCancellation, throwIfAborted, withDatabaseInterrupt } from './operation.js'
 
 const schemaVersion = 5
 const fieldIndexesSetting = 'field_indexes'
@@ -149,6 +150,7 @@ export class CollectionStore {
    *     isIndexed(collection: string, fieldPath: string): boolean,
    *   },
    *   fieldIndexesProvided: boolean,
+   *   sqliteCache?: { mainKiB: number, blobKiB: number, mmapBytes: number },
    * }} options
    */
   constructor({
@@ -162,6 +164,7 @@ export class CollectionStore {
     durability,
     fieldIndexes,
     fieldIndexesProvided,
+    sqliteCache,
   }) {
     this.collection = collection
     this.databasePath = databasePath
@@ -173,6 +176,7 @@ export class CollectionStore {
     this.durability = durability
     this.requestedFieldIndexes = fieldIndexes
     this.fieldIndexesProvided = fieldIndexesProvided
+    this.sqliteCache = sqliteCache ?? normalizeSqliteCache()
     this.activeFieldIndexes = fieldIndexes
     /** @type {Map<number, { fieldId: number, path: string, kinds: Set<string>, kindCounts: Record<string, number>, queryCount: number, totalDurationMs: number, slowQueryCount: number, resultRows: number, lastSeenAt: number }>} */
     this.pendingIndexObservations = new Map()
@@ -277,9 +281,9 @@ export class CollectionStore {
         `
           PRAGMA main.foreign_keys=ON;
           PRAGMA main.temp_store=MEMORY;
-          PRAGMA main.cache_size=-16384;
-          PRAGMA main.mmap_size=268435456;
-          PRAGMA blobs.cache_size=-8192;
+          PRAGMA main.cache_size=-${this.sqliteCache.mainKiB};
+          PRAGMA main.mmap_size=${this.sqliteCache.mmapBytes};
+          PRAGMA blobs.cache_size=-${this.sqliteCache.blobKiB};
         `,
       )
       if (readOnly) {
@@ -675,11 +679,7 @@ export class CollectionStore {
     }
     if (!documents.length) return []
 
-    const encoded = await Promise.all(
-      documents.map((document) => encodeDocument(document, this.collection)),
-    )
-
-    return this.mutate(() => this.writeEncodedDocuments(encoded, existingObjectIds), options)
+    return this.mutate(() => this.writeDocumentsInTransaction(documents, existingObjectIds), options)
   }
 
   /**
@@ -695,10 +695,21 @@ export class CollectionStore {
       throw new Error('Document and object id counts must match')
     }
     if (!documents.length) return []
-    const encoded = await Promise.all(
-      documents.map((document) => encodeDocument(document, this.collection)),
-    )
-    return this.writeEncodedDocuments(encoded, existingObjectIds)
+    // Bound transient encoded nodes and SQL buffers independently of the input
+    // batch length. Every chunk still belongs to the caller's ONE transaction.
+    const objectIds = []
+    for (let offset = 0; offset < documents.length; offset += 256) {
+      checkDatabaseCancellation(this.db)
+      const encoded = await Promise.all(
+        documents.slice(offset, offset + 256)
+          .map((document) => encodeDocument(document, this.collection)),
+      )
+      checkDatabaseCancellation(this.db)
+      objectIds.push(...await this.writeEncodedDocuments(
+        encoded, existingObjectIds.slice(offset, offset + 256),
+      ))
+    }
+    return objectIds
   }
 
   /**
@@ -1539,6 +1550,7 @@ export class CollectionStore {
       collection: this.collection,
       schemaVersion,
       mode: this.mode,
+      sqliteCache: this.sqliteCache,
       fields: this.fields.length,
       fieldIndexes,
       databasePath: this.databasePath,

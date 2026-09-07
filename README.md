@@ -584,6 +584,8 @@ The returned handle exposes `url`, `host`, the actual `port`, resolved
 | `maxRows` | `500` | Hard maximum for one query response or document page; configurable through `10_000`. |
 | `bodyLimitBytes` | `2 MiB` | Maximum JSON request body; configurable through `64 MiB`. |
 | `queryTimeoutMs` | `10_000` | Deadline applied to database work; configurable through ten minutes. |
+| `maxOpenCollections` | `16` | Retained collection connections per discovered database; maximum 10,000. |
+| `sqliteCache` | Core defaults | Main/blob page-cache budgets and main mapping limit; also supported in readonly mode. |
 
 Studio always binds to `127.0.0.1`. There is intentionally no remote bind
 option. Unknown options and unsafe limits are rejected before listening.
@@ -779,6 +781,7 @@ Creates one engine bound to exactly one database directory.
 | `durability` | `"strict"` | `"strict"` uses SQLite `synchronous=FULL`; `"balanced"` uses `synchronous=NORMAL` for fewer synchronization operations and weaker power-loss durability. |
 | `mode` | `"readwrite"` | `"readonly"` opens existing current-format disk storage through SQLite's read-only mode and permits only reads and backups. |
 | `maxOpenCollections` | `16` | Positive safe integer limiting disk collection connections retained by this engine. It is intentionally unavailable for `:memory:` engines. |
+| `sqliteCache` | 16 MiB main, 8 MiB blobs, 256 MiB main mmap | Connection-local cache budgets and mapping limit. See [memory controls](#cancellation-streaming-and-memory-controls). Also allowed in readonly mode. |
 | `fieldIndexes` | `"auto"` for new storage | Adaptive `"auto"`, deterministic `"all"`/`"none"`, or an automatic/manual policy. Existing storage keeps its persisted policy when this option is omitted. It cannot be supplied in read-only mode. |
 
 Unknown options are rejected so misspellings do not silently change storage or
@@ -1119,7 +1122,7 @@ payload. As with other mutation selectors, `GROUP BY` and `HAVING` are rejected.
 ### `stream(statement, parameters?, options?)`
 
 Returns an `AsyncIterable` for projected rows or complete documents from
-`SELECT`. Results are fetched in bounded pages and only one unread page is
+`SELECT`. One prepared statement is stepped in bounded batches; only one unread batch is
 buffered, so a slow consumer applies backpressure instead of accumulating the
 complete result in memory. The query keeps one stable SQLite snapshot until
 iteration finishes.
@@ -1686,11 +1689,12 @@ first production deployment.
 
 ## Performance controls and benchmarks
 
-`fieldIndexes`, `maxOpenCollections`, and `durability` trade read latency,
+`fieldIndexes`, `maxOpenCollections`, `sqliteCache`, and `durability` trade read latency,
 write cost, retained resources, and failure guarantees against one another.
 There is no universally fastest combination. The repository includes a
 deterministic harness covering batched inserts, indexed point reads, ordered
-range reads, updates, and collection-cache churn.
+range reads, updates, full-document streaming, slow-reader writer latency,
+sampled memory, and collection-cache churn.
 
 From a development checkout:
 
@@ -1721,6 +1725,45 @@ See the [benchmark guide](benchmarks/README.md) for safe storage behavior,
 repeatable comparisons, report contents, and interpretation. These synthetic
 results are a regression and trade-off tool, not a capacity claim or a
 substitute for production-shaped load, contention, backup, and recovery tests.
+
+### Cancellation, streaming, and memory controls
+
+Mutation cancellation is accepted until `COMMIT` is dispatched. Cancellation
+before that point rolls back the mutation. Once commit starts, `execute()`
+reports SQLite's actual commit outcome; a late abort does not turn a successful
+write into an `AbortError`. This boundary also applies to operation deadlines.
+
+`stream()` steps one prepared statement for the entire result, preserving
+volatile expressions such as `ORDER BY random()` across batches. Early return,
+cancellation, and errors finalize the cursor. A slow consumer retains the read
+snapshot and can delay writes to the same collection; finish the iterator or
+abort it promptly. Sorting and grouping may still need SQLite temporary storage.
+
+Large writes encode at most 256 documents at a time within one transaction.
+Failure in any batch rolls back all batches. This bounds transient encoding and
+SQL buffers by batch size; it does not impose a byte limit on a single document
+or remove the caller's input array and mutation result IDs from memory.
+
+Page-cache and memory-map settings can be tuned independently of the number of
+open collections:
+
+```js
+const database = createIdb({
+  storagePath: './data/my-app',
+  maxOpenCollections: 4,
+  sqliteCache: { mainKiB: 4096, blobKiB: 2048, mmapBytes: 0 },
+});
+```
+
+Defaults remain `mainKiB: 16384`, `blobKiB: 8192`, and `mmapBytes: 268435456`.
+The two KiB settings accept integers from 1 through 2147483647; `mmapBytes`
+accepts 0 through 2147483647, with 0 disabling main-file memory mapping.
+These are per-collection, connection-local settings and are also allowed in
+read-only mode. SQLite may clamp or ignore memory mapping on unsupported
+storage. `diagnostics().sqliteCache` and each open collection's `sqliteCache`
+report the configured values, not measured allocations. Cache sizes are
+suggested budgets, not hard process memory limits; large results, temporary
+sorts, input documents, and other engines also consume memory.
 
 ## Raw diagnostic reads
 
@@ -1761,6 +1804,13 @@ Before adopting `node-idb` for production:
      multi-host requirements are likely to grow materially.
 
 ## Project status and support
+
+CI and tag releases share one validation workflow covering Windows/Linux and
+Node.js 20.19, 22, and 24. Publication depends on every combination succeeding
+for the tagged code. `npm run test:package` builds the real tarball, installs it
+in a temporary standalone consumer, and checks the core API, Studio assets/API,
+CLI shim, and TypeScript declarations. It uses the npm registry for dependencies
+and native installation scripts, and cleans up its temporary consumer afterward.
 
 `node-idb` is currently a `0.x` package. Its test suite covers the public API,
 SQL behavior, typed values, legacy migration, concurrency, corruption

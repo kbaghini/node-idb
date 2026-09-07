@@ -6,6 +6,42 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-07
+
+### Fixed
+
+- Fixed Studio's Reload documents click handler and cancelled obsolete read
+  requests when changing collections or starting replacement requests.
+- Preserved button content and accessibility markup across overlapping busy
+  states, and cleared stale query/diagnostic results on collection changes.
+
+- Roll back mutations cancelled before commit dispatch; report the actual SQLite
+  outcome when cancellation arrives after the commit boundary.
+- Step a single prepared statement for streamed results, preventing duplicate
+  or missing rows with volatile ordering and avoiding repeated OFFSET scans.
+- Finalize stream cursors on early return, errors, and cancellation, including
+  when the producer is waiting for a slow consumer.
+- Preserve quoted collection names in payload-style UPDATE selectors.
+
+### Added
+
+- Added Studio query cancellation, on-demand result details, bounded previews,
+  cache settings/diagnostics, and installed-version metadata.
+- Made publication depend on the full Windows/Linux and Node 20/22/24 matrix
+  for the tagged code through a shared validation workflow.
+- Added `test:package` to install a real tarball outside the repository and
+  validate API, Studio, CLI, native SQLite loading, and public TypeScript types.
+
+- Connection-local `sqliteCache` settings for main/blob page caches and main
+  memory mapping, exposed in public types and diagnostics, including readonly.
+- Benchmark report format 2 with full-document streaming, slow-reader writer
+  latency, sampled process-memory peaks, and cache configuration flags.
+
+### Changed
+
+- Encode and write large document batches in bounded groups within one atomic
+  transaction, reducing transient memory at the cost of more SQL batches.
+
 ## [0.3.0] - 2026-08-29
 
 ### Added

@@ -1,0 +1,358 @@
+{
+  "formatVersion": 2,
+  "benchmark": "node-idb",
+  "startedAt": "2026-09-07T08:03:10.893Z",
+  "finishedAt": "2026-09-07T08:03:17.313Z",
+  "totalDurationMs": 6421.89,
+  "environment": {
+    "node": "v24.11.1",
+    "v8": "13.6.233.10-node.28",
+    "uv": "1.51.0",
+    "napi": "10",
+    "sqlite": "3.52.0",
+    "packageVersion": "0.3.0",
+    "platform": "win32",
+    "release": "10.0.28000",
+    "architecture": "x64",
+    "cpuModel": "13th Gen Intel(R) Core(TM) i9-13900H",
+    "logicalCpuCount": 20,
+    "totalMemoryBytes": 16794468352
+  },
+  "configuration": {
+    "preset": "quick",
+    "documents": 200,
+    "insertBatchSize": 50,
+    "pointQueries": 100,
+    "rangeQueries": 30,
+    "requestedRangeWidth": 20,
+    "rangeWidth": 20,
+    "updates": 75,
+    "warmupQueries": 10,
+    "cacheChurnCollections": 8,
+    "cacheChurnQueries": 24,
+    "payloadBytes": 96,
+    "seed": 31137830,
+    "streamBatchSize": 100,
+    "slowReaderRows": 50,
+    "slowReaderDelayMs": 1,
+    "databaseOptions": {
+      "busyTimeoutMs": 10000,
+      "durability": "balanced",
+      "fieldIndexes": "focused",
+      "sqliteCache": {
+        "mainKiB": 16384,
+        "blobKiB": 8192,
+        "mmapBytes": 268435456
+      },
+      "maxOpenCollections": 4
+    }
+  },
+  "storage": {
+    "kind": "temporary",
+    "path": "C:\\Users\\NEU\\AppData\\Local\\Temp\\node-idb-benchmark-ZEE3rs",
+    "retained": false
+  },
+  "phases": {
+    "insert": {
+      "items": 200,
+      "itemUnit": "documents",
+      "measuredCalls": 4,
+      "sampleUnit": "batch",
+      "setupItems": 0,
+      "durationMs": 127.139,
+      "throughputPerSecond": 1573.085,
+      "latencyMs": {
+        "minimum": 20.384,
+        "mean": 31.767,
+        "p50": 23.878,
+        "p95": 53.879,
+        "p99": 57.916,
+        "maximum": 58.925
+      },
+      "memory": {
+        "sampleIntervalMs": 10,
+        "baselineBytes": {
+          "rss": 51056640,
+          "heapTotal": 11329536,
+          "heapUsed": 7861960,
+          "external": 2412196,
+          "arrayBuffers": 169319
+        },
+        "sampledPeakBytes": {
+          "rss": 55615488,
+          "heapTotal": 12378112,
+          "heapUsed": 8899464,
+          "external": 2412196,
+          "arrayBuffers": 169319
+        },
+        "endBytes": {
+          "rss": 55615488,
+          "heapTotal": 12378112,
+          "heapUsed": 8899464,
+          "external": 2267768,
+          "arrayBuffers": 24851
+        }
+      }
+    },
+    "pointQuery": {
+      "items": 100,
+      "itemUnit": "queries",
+      "measuredCalls": 100,
+      "sampleUnit": "query",
+      "setupItems": 0,
+      "durationMs": 1568.655,
+      "throughputPerSecond": 63.749,
+      "latencyMs": {
+        "minimum": 9.142,
+        "mean": 15.676,
+        "p50": 15.837,
+        "p95": 18.776,
+        "p99": 20.31,
+        "maximum": 20.383
+      },
+      "memory": {
+        "sampleIntervalMs": 10,
+        "baselineBytes": {
+          "rss": 55615488,
+          "heapTotal": 12378112,
+          "heapUsed": 8901952,
+          "external": 2267768,
+          "arrayBuffers": 24851
+        },
+        "sampledPeakBytes": {
+          "rss": 77053952,
+          "heapTotal": 29155328,
+          "heapUsed": 17391664,
+          "external": 2267768,
+          "arrayBuffers": 24851
+        },
+        "endBytes": {
+          "rss": 72073216,
+          "heapTotal": 29155328,
+          "heapUsed": 10625784,
+          "external": 2267732,
+          "arrayBuffers": 24815
+        }
+      }
+    },
+    "rangeQuery": {
+      "items": 30,
+      "itemUnit": "queries",
+      "measuredCalls": 30,
+      "sampleUnit": "query",
+      "setupItems": 0,
+      "durationMs": 498.31,
+      "throughputPerSecond": 60.203,
+      "latencyMs": {
+        "minimum": 8.678,
+        "mean": 16.595,
+        "p50": 16.238,
+        "p95": 23.489,
+        "p99": 28.4,
+        "maximum": 29.515
+      },
+      "memory": {
+        "sampleIntervalMs": 10,
+        "baselineBytes": {
+          "rss": 72073216,
+          "heapTotal": 29155328,
+          "heapUsed": 10627160,
+          "external": 2267732,
+          "arrayBuffers": 24815
+        },
+        "sampledPeakBytes": {
+          "rss": 84447232,
+          "heapTotal": 29941760,
+          "heapUsed": 20348872,
+          "external": 2267732,
+          "arrayBuffers": 24815
+        },
+        "endBytes": {
+          "rss": 74969088,
+          "heapTotal": 29941760,
+          "heapUsed": 16298784,
+          "external": 2267732,
+          "arrayBuffers": 24815
+        }
+      }
+    },
+    "update": {
+      "items": 75,
+      "itemUnit": "updates",
+      "measuredCalls": 75,
+      "sampleUnit": "update",
+      "setupItems": 0,
+      "durationMs": 2728.479,
+      "throughputPerSecond": 27.488,
+      "latencyMs": {
+        "minimum": 18.091,
+        "mean": 36.369,
+        "p50": 34.615,
+        "p95": 49.537,
+        "p99": 50.667,
+        "maximum": 51.773
+      },
+      "memory": {
+        "sampleIntervalMs": 10,
+        "baselineBytes": {
+          "rss": 74969088,
+          "heapTotal": 29941760,
+          "heapUsed": 16300160,
+          "external": 2267732,
+          "arrayBuffers": 24815
+        },
+        "sampledPeakBytes": {
+          "rss": 75177984,
+          "heapTotal": 29941760,
+          "heapUsed": 19452576,
+          "external": 2267732,
+          "arrayBuffers": 24815
+        },
+        "endBytes": {
+          "rss": 74792960,
+          "heapTotal": 29941760,
+          "heapUsed": 14789152,
+          "external": 2267732,
+          "arrayBuffers": 24815
+        }
+      }
+    },
+    "stream": {
+      "items": 200,
+      "itemUnit": "documents",
+      "measuredCalls": 1,
+      "sampleUnit": "stream",
+      "setupItems": 0,
+      "durationMs": 58.508,
+      "throughputPerSecond": 3418.365,
+      "latencyMs": {
+        "minimum": 58.508,
+        "mean": 58.508,
+        "p50": 58.508,
+        "p95": 58.508,
+        "p99": 58.508,
+        "maximum": 58.508
+      },
+      "firstRowMs": 39.882,
+      "batchSize": 100,
+      "memory": {
+        "sampleIntervalMs": 10,
+        "baselineBytes": {
+          "rss": 74792960,
+          "heapTotal": 29941760,
+          "heapUsed": 14790432,
+          "external": 2267732,
+          "arrayBuffers": 24815
+        },
+        "sampledPeakBytes": {
+          "rss": 76222464,
+          "heapTotal": 29941760,
+          "heapUsed": 18309976,
+          "external": 2267732,
+          "arrayBuffers": 24815
+        },
+        "endBytes": {
+          "rss": 76066816,
+          "heapTotal": 29941760,
+          "heapUsed": 18309976,
+          "external": 2267732,
+          "arrayBuffers": 24815
+        }
+      }
+    },
+    "slowReaderWriter": {
+      "items": 1,
+      "itemUnit": "writes",
+      "measuredCalls": 1,
+      "sampleUnit": "write",
+      "setupItems": 0,
+      "durationMs": 128.099,
+      "throughputPerSecond": 7.806,
+      "latencyMs": {
+        "minimum": 104.431,
+        "mean": 104.431,
+        "p50": 104.431,
+        "p95": 104.431,
+        "p99": 104.431,
+        "maximum": 104.431
+      },
+      "rowsConsumed": 50,
+      "batchSize": 1,
+      "consumerDelayMs": 1,
+      "writeDurationMs": 104.431,
+      "memory": {
+        "sampleIntervalMs": 10,
+        "baselineBytes": {
+          "rss": 76066816,
+          "heapTotal": 29941760,
+          "heapUsed": 18311496,
+          "external": 2267732,
+          "arrayBuffers": 24815
+        },
+        "sampledPeakBytes": {
+          "rss": 76066816,
+          "heapTotal": 29941760,
+          "heapUsed": 20332992,
+          "external": 2267732,
+          "arrayBuffers": 24815
+        },
+        "endBytes": {
+          "rss": 75616256,
+          "heapTotal": 29941760,
+          "heapUsed": 16930896,
+          "external": 2267732,
+          "arrayBuffers": 24815
+        }
+      }
+    },
+    "cacheChurn": {
+      "items": 24,
+      "itemUnit": "queries",
+      "measuredCalls": 24,
+      "sampleUnit": "query",
+      "setupItems": 8,
+      "durationMs": 814.498,
+      "throughputPerSecond": 29.466,
+      "latencyMs": {
+        "minimum": 24.348,
+        "mean": 33.921,
+        "p50": 32.625,
+        "p95": 42.742,
+        "p99": 48.75,
+        "maximum": 50.457
+      },
+      "memory": {
+        "sampleIntervalMs": 10,
+        "baselineBytes": {
+          "rss": 75616256,
+          "heapTotal": 29941760,
+          "heapUsed": 16932440,
+          "external": 2267732,
+          "arrayBuffers": 24815
+        },
+        "sampledPeakBytes": {
+          "rss": 77881344,
+          "heapTotal": 30728192,
+          "heapUsed": 19787536,
+          "external": 2274532,
+          "arrayBuffers": 31615
+        },
+        "endBytes": {
+          "rss": 77279232,
+          "heapTotal": 30728192,
+          "heapUsed": 17478072,
+          "external": 2268532,
+          "arrayBuffers": 25615
+        }
+      }
+    }
+  },
+  "notes": [
+    "Document generation, query selection, warmups, and cache-churn setup are excluded from phase timings.",
+    "Latency percentiles summarize individual API calls; insert latency samples are batches.",
+    "Use identical configuration and comparable idle hardware when comparing reports.",
+    "Memory is process-wide and sampled every 10 ms; peaks are estimates and include warmup/setup within each phase.",
+    "The slow-reader phase measures one writer queued on the same engine and collection; it is not a cross-process contention benchmark.",
+    "Stream and slow-reader percentiles each describe one sample; repeat runs for a latency distribution."
+  ]
+}

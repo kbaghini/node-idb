@@ -5,6 +5,148 @@ import path from 'node:path'
 import test from 'node:test'
 
 import { createIdb, inspectStorage, restoreBackup, verifyBackup } from 'node-idb'
+import sqlite3 from 'sqlite3'
+import { CollectionStore } from '../src/idb/collection.js'
+
+test('cancelled public mutations roll back before commit and report success after commit dispatch', async () => {
+  const database = createIdb({ storagePath: ':memory:' })
+  const originalWrite = CollectionStore.prototype.writeEncodedDocuments
+  const originalExec = sqlite3.Database.prototype.exec
+  try {
+    await database.execute('INSERT INTO examples', { value: 1 })
+    const beforeCommit = new AbortController()
+    CollectionStore.prototype.writeEncodedDocuments = async function (...args) {
+      const result = await originalWrite.apply(this, args)
+      beforeCommit.abort()
+      return result
+    }
+    await assert.rejects(database.execute('UPDATE examples', { value: 2 }, {
+      signal: beforeCommit.signal,
+    }), { name: 'AbortError' })
+    CollectionStore.prototype.writeEncodedDocuments = originalWrite
+    assert.deepEqual(await database.execute('FIND examples'), [{ value: 1 }])
+
+    const duringCommit = new AbortController()
+    sqlite3.Database.prototype.exec = function (sql, callback) {
+      if (sql === 'COMMIT') {
+        // The boundary has been crossed; abort while SQLite owns the commit.
+        duringCommit.abort()
+      }
+      return originalExec.call(this, sql, callback)
+    }
+    await database.execute('UPDATE examples', { value: 3 }, { signal: duringCommit.signal })
+    sqlite3.Database.prototype.exec = originalExec
+    assert.deepEqual(await database.execute('FIND examples'), [{ value: 3 }])
+
+    const failedCommit = new AbortController()
+    sqlite3.Database.prototype.exec = function (sql, callback) {
+      if (sql === 'COMMIT') {
+        failedCommit.abort()
+        // Fail without committing: the SQLite error must survive a late abort.
+        return originalExec.call(this, 'SELECT missing_commit_probe', callback)
+      }
+      return originalExec.call(this, sql, callback)
+    }
+    await assert.rejects(database.execute('UPDATE examples', { value: 4 }, {
+      signal: failedCommit.signal,
+    }), { code: 'SQLITE_ERROR' })
+    sqlite3.Database.prototype.exec = originalExec
+    assert.deepEqual(await database.execute('FIND examples'), [{ value: 3 }])
+  } finally {
+    CollectionStore.prototype.writeEncodedDocuments = originalWrite
+    sqlite3.Database.prototype.exec = originalExec
+    await database.close()
+  }
+})
+
+test('payload UPDATE preserves quoted collection identifiers', async () => {
+  const database = createIdb({ storagePath: ':memory:' })
+  try {
+    for (const name of ['order-items', 'select']) {
+      await database.execute(`INSERT INTO "${name}"`, [{ value: 1 }, { value: 2 }])
+      await database.execute(`UPDATE "${name}" WHERE value = 1`, { value: 3 })
+      assert.deepEqual(await database.execute(`FIND "${name}" ORDER BY value`), [
+        { value: 2 }, { value: 3 },
+      ])
+    }
+  } finally {
+    await database.close()
+  }
+})
+
+test('stream executes volatile ordering once and finalizes on early return', async () => {
+  const database = createIdb({ storagePath: ':memory:' })
+  try {
+    await database.execute('INSERT INTO examples', Array.from({ length: 100 }, (_, id) => ({ id })))
+    const ids = []
+    for await (const row of database.stream('SELECT id FROM examples ORDER BY random()', [], { batchSize: 10 })) {
+      ids.push(row.id)
+    }
+    assert.equal(ids.length, 100)
+    assert.equal(new Set(ids).size, 100)
+    const rows = []
+    for await (const row of database.stream('SELECT id FROM examples ORDER BY id LIMIT ? OFFSET ?', [13, 7], { batchSize: 4 })) {
+      rows.push(row.id)
+    }
+    assert.deepEqual(rows, Array.from({ length: 13 }, (_, index) => index + 7))
+    for await (const row of database.stream('FIND examples', [], { batchSize: 1 })) {
+      assert.ok(row)
+      break
+    }
+    await database.execute('INSERT INTO examples', { id: 100 })
+    assert.equal((await database.execute('FIND examples')).length, 101)
+    await assert.rejects(async () => {
+      for await (const row of database.stream('SELECT nonexistent_function(id) FROM examples')) {
+        assert.fail(`Unexpected row: ${row}`)
+      }
+    })
+    assert.equal((await database.execute('FIND examples')).length, 101)
+  } finally {
+    await database.close()
+  }
+})
+
+test('large writes remain atomic across encoding batches, including blob rows and new fields', async () => {
+  const database = createIdb({ storagePath: ':memory:' })
+  const documents = Array.from({ length: 350 }, (_, id) => ({
+    id, nested: { value: id }, bytes: Buffer.from([id]), tags: [id, new Date(id)],
+  }))
+  try {
+    await database.execute('INSERT INTO examples', { sentinel: true })
+    await assert.rejects(database.execute('INSERT INTO examples', [
+      ...documents, { invalid: Number.NaN },
+    ]), /finite/)
+    assert.deepEqual(await database.execute('FIND examples'), [{ sentinel: true }])
+    const ids = await database.execute('INSERT INTO examples', documents)
+    assert.equal(new Set(ids).size, documents.length)
+    assert.deepEqual(await database.execute('FIND examples WHERE id >= 0 ORDER BY id'), documents)
+    await database.execute('UPDATE examples WHERE id >= 0', { updated: true })
+    assert.deepEqual(await database.execute('FIND examples WHERE id >= 0 ORDER BY id'),
+      documents.map((document) => ({ ...document, updated: true })))
+  } finally {
+    await database.close()
+  }
+})
+
+test('aborting a backpressured stream releases its cursor and queued writer', async () => {
+  const database = createIdb({ storagePath: ':memory:' })
+  const controller = new AbortController()
+  const iterator = database.stream('FIND examples', [], { batchSize: 1, signal: controller.signal })[Symbol.asyncIterator]()
+  try {
+    await database.execute('INSERT INTO examples', Array.from({ length: 100 }, (_, id) => ({ id })))
+    assert.equal((await iterator.next()).done, false)
+    const writer = database.execute('INSERT INTO examples', { id: 100 })
+    // Let the producer fill its bounded queue while the consumer is paused.
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    controller.abort()
+    await writer
+    await assert.rejects(iterator.next(), { name: 'AbortError' })
+    assert.equal((await database.execute('FIND examples')).length, 101)
+  } finally {
+    await iterator.return()
+    await database.close()
+  }
+})
 
 test('execute supports cancellation and deadlines without poisoning the connection', async () => {
   const database = createIdb({ storagePath: ':memory:' })

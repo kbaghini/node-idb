@@ -1,3 +1,5 @@
+import type { SqliteCacheOptions } from '../idb/index.js';
+
 export interface StudioCodecLimits {
   maxDepth?: number;
   maxNodes?: number;
@@ -31,6 +33,10 @@ export function decodeStudioValue(
 ): unknown;
 
 export interface StudioOptions {
+  /** Connection-local page-cache and mapping settings for each opened database. */
+  sqliteCache?: SqliteCacheOptions;
+  /** Retained collection connections per database. Default: 16; maximum: 10000. */
+  maxOpenCollections?: number;
   /** Directory containing a node-idb database and/or immediate child databases. */
   rootPath: string;
   /** Local TCP port. Use 0 to let the operating system choose one. Defaults to 4177. */
@@ -62,6 +68,7 @@ export interface StudioDatabaseState {
 }
 
 export interface StudioState {
+  readonly version: string;
   readonly writable: boolean;
   readonly rootPath: string;
   readonly scannedAt: string;

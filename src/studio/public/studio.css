@@ -1524,10 +1524,26 @@ input {
 }
 
 .result-item {
-  display: grid;
-  grid-template-columns: 46px minmax(0, 1fr);
   border-bottom: 1px solid var(--border);
 }
+
+.result-item > summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-right: 12px;
+  cursor: pointer;
+}
+
+.result-item > summary::before {
+  content: "+";
+  margin-left: 12px;
+  color: var(--text-muted);
+}
+
+.result-item[open] > summary::before { content: "−"; }
+.result-item > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.result-item > summary .document-preview { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .result-item:last-child {
   border-bottom: 0;

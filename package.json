@@ -1,6 +1,6 @@
 {
   "name": "node-idb",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "An embedded SQLite document store for Node.js with typed values, SQL-style queries, automatic indexes, and a local browser Studio.",
   "type": "module",
   "main": "./src/index.js",
@@ -33,6 +33,7 @@
   ],
   "scripts": {
     "test": "node --test && npm run test:types",
+    "test:package": "node scripts/check-package.js",
     "test:types": "tsc --noEmit --skipLibCheck --module NodeNext --moduleResolution NodeNext --target ES2022 tests/idb-options.types.ts tests/idb-studio.types.ts",
     "pack:check": "npm pack --dry-run",
     "benchmark": "node benchmarks/run.js --preset standard",

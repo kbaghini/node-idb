@@ -165,7 +165,12 @@ test('retries SQLITE_BUSY and cooperatively aborts without leaving a partial fil
         retryErrors: [],
         step(_pages, callback) {
           const error = Object.assign(new Error('locked'), { code: 'SQLITE_LOCKED', errno: 6 })
-          queueMicrotask(() => callback(error))
+          queueMicrotask(() => {
+            callback(error)
+            // Cancel only after the handle exists and a busy step has run.
+            // A wall-clock timer can fire before filesystem setup on loaded CI.
+            controller.abort('test cancellation')
+          })
         },
         finish(callback) {
           abortedFinishes++
@@ -176,7 +181,6 @@ test('retries SQLITE_BUSY and cooperatively aborts without leaving a partial fil
       return backup
     },
   }
-  setTimeout(() => controller.abort('test cancellation'), 10)
   await assert.rejects(
     backupSqliteFile(
       /** @type {import('sqlite3').Database} */ (/** @type {unknown} */ (alwaysBusyDatabase)),

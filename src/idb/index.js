@@ -18,9 +18,11 @@ import {
 import { assertFieldName, deepClone, deepMerge, isPlainObject } from './codec.js'
 import { CollectionStore } from './collection.js'
 import { createAsyncQueue } from './async-queue.js'
-import { closeDatabase, openDatabase } from './database.js'
+import { normalizeSqliteCache } from './cache-options.js'
+import { closeDatabase, iterateBatches, openDatabase, quoteIdentifier } from './database.js'
 import { normalizeFieldIndexes } from './field-indexes.js'
 import {
+  abortError,
   createOperationScope,
   throwIfAborted as throwIfOperationAborted,
   validateAbortSignal,
@@ -295,6 +297,7 @@ function resolveDeletePaths(store, pattern) {
  *   durability?: IdbDurability,
  *   mode?: IdbMode,
  *   maxOpenCollections?: number,
+ *   sqliteCache?: { mainKiB?: number, blobKiB?: number, mmapBytes?: number },
  *   fieldIndexes?: unknown,
  * }} IdbOptions
  */
@@ -317,6 +320,7 @@ export function createIdb(options) {
       'durability',
       'mode',
       'maxOpenCollections',
+      'sqliteCache',
       'fieldIndexes',
     ].includes(key),
   )
@@ -365,6 +369,7 @@ export function createIdb(options) {
     throw new TypeError('fieldIndexes cannot be changed in readonly mode')
   }
   const fieldIndexes = normalizeFieldIndexes(requestedFieldIndexes)
+  const sqliteCache = normalizeSqliteCache(options.sqliteCache)
   const fieldIndexesProvided = Object.hasOwn(options, 'fieldIndexes')
   const storagePath = memory ? requestedStoragePath : path.resolve(requestedStoragePath)
   const storageCatalog = memory ? null : acquireStorageCatalog(storagePath)
@@ -475,6 +480,7 @@ export function createIdb(options) {
       durability,
       fieldIndexes,
       fieldIndexesProvided,
+      sqliteCache,
     })
     const ready = (async () => {
       try {
@@ -748,7 +754,7 @@ export function createIdb(options) {
         new RegExp(`^\\s*update\\s+${identifierPattern}`, 'i'),
         '',
       )
-      const parsed = await parseSql(`SELECT object_id FROM ${collection} ${filter}`)
+      const parsed = await parseSql(`SELECT object_id FROM ${quoteIdentifier(collection)} ${filter}`)
       return withStore(collection, (store) => store.mutate(async () => {
         const objectIds = await selectObjectIds(store, parsed, parameters)
         if (!objectIds.length) return []
@@ -1052,16 +1058,11 @@ export function createIdb(options) {
     await withStore(collection, (store) => store.snapshot(async () => {
       const compiled = await compileSelect(store, selection, parameters)
       const sourceSql = compiled.sql.replace(/;\s*$/, '')
-      let offset = 0
       let resultRows = 0
       const startedAt = performance.now()
-      while (true) {
-        throwIfOperationAborted(signal)
-        const rows = await store.rawAll(
-          `SELECT * FROM (${sourceSql}) AS "__node_idb_stream" LIMIT ? OFFSET ?`,
-          [...compiled.parameters, batchSize, offset],
-        )
-        if (!rows.length) break
+      for await (const rows of iterateBatches(
+        store.db, sourceSql, compiled.parameters, batchSize, signal,
+      )) {
         resultRows += rows.length
         if (compiled.mode === 'documents') {
           const objectIds = resultRowsToIds(rows)
@@ -1078,8 +1079,6 @@ export function createIdb(options) {
             compiled.objectProjectionError,
           ))
         }
-        offset += rows.length
-        if (rows.length < batchSize) break
       }
       store.recordQueryObservation(compiled.usage, {
         durationMs: performance.now() - startedAt,
@@ -1106,6 +1105,8 @@ export function createIdb(options) {
       const streamOptions = normalizeStreamOptions(options)
       const scope = createOperationScope(streamOptions)
       const queue = createAsyncQueue()
+      const cancelQueue = () => queue.close(abortError(scope.signal))
+      scope.signal.addEventListener('abort', cancelQueue, { once: true })
       const barrier = operationBarrier
       /** @type {(value?: unknown) => void} */
       let releaseLifetime
@@ -1128,7 +1129,10 @@ export function createIdb(options) {
         while (true) {
           const next = await queue.next()
           if (next.done) break
-          for (const value of /** @type {unknown[]} */ (next.value)) yield value
+          for (const value of /** @type {unknown[]} */ (next.value)) {
+            throwIfOperationAborted(scope.signal)
+            yield value
+          }
         }
         await producer
       } finally {
@@ -1137,6 +1141,7 @@ export function createIdb(options) {
         }
         queue.close()
         await producer?.catch(() => {})
+        scope.signal.removeEventListener('abort', cancelQueue)
         scope.dispose()
         operations.delete(lifetime)
         releaseLifetime()
@@ -1259,6 +1264,7 @@ export function createIdb(options) {
           state,
           schemaVersion: 5,
           busyTimeoutMs,
+          sqliteCache,
           durability: mode === 'readwrite' ? durability : null,
           fieldIndexes: mode === 'readwrite'
             ? JSON.parse(fieldIndexes.serialized)

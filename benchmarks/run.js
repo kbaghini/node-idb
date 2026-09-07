@@ -8,7 +8,7 @@ import { performance } from 'node:perf_hooks'
 
 import { createIdb } from '../src/index.js'
 
-const BENCHMARK_FORMAT_VERSION = 1
+const BENCHMARK_FORMAT_VERSION = 2
 const TEMPORARY_DIRECTORY_PREFIX = 'node-idb-benchmark-'
 const OWNERSHIP_MARKER = '.node-idb-benchmark.lock'
 
@@ -83,6 +83,12 @@ const valueOptions = new Map([
   ['--durability', 'durability'],
   ['--field-indexes', 'fieldIndexes'],
   ['--max-open-collections', 'maxOpenCollections'],
+  ['--stream-batch-size', 'streamBatchSize'],
+  ['--slow-reader-rows', 'slowReaderRows'],
+  ['--slow-reader-delay-ms', 'slowReaderDelayMs'],
+  ['--main-cache-kib', 'mainCacheKiB'],
+  ['--blob-cache-kib', 'blobCacheKiB'],
+  ['--mmap-bytes', 'mmapBytes'],
   ['--storage-path', 'storagePath'],
   ['--format', 'format'],
   ['--output', 'output'],
@@ -102,6 +108,12 @@ const numericOptions = Object.freeze({
   seed: { minimum: 0, maximum: 0xffff_ffff },
   busyTimeoutMs: { minimum: 0, maximum: 2_147_483_647 },
   maxOpenCollections: { minimum: 1, maximum: 1_000_000 },
+  streamBatchSize: { minimum: 1, maximum: 10_000 },
+  slowReaderRows: { minimum: 1, maximum: 10_000 },
+  slowReaderDelayMs: { minimum: 0, maximum: 1_000 },
+  mainCacheKiB: { minimum: 1, maximum: 2_147_483_647 },
+  blobCacheKiB: { minimum: 1, maximum: 2_147_483_647 },
+  mmapBytes: { minimum: 0, maximum: 2_147_483_647 },
 })
 
 function usage() {
@@ -128,6 +140,9 @@ Workload overrides:
   --cache-churn-queries <n>           Measured churn lookups
   --payload-bytes <n>                 Approximate repeated-text field size
   --seed <n>                          Unsigned 32-bit deterministic seed
+  --stream-batch-size <n>             Full-document stream batch size (100)
+  --slow-reader-rows <n>              Rows in slow-reader/write test (50)
+  --slow-reader-delay-ms <n>          Delay per slow-consumer row (1)
 
 Database options:
   --durability strict|balanced
@@ -136,6 +151,9 @@ Database options:
                                       auto learns from the measured workload;
                                       focused indexes benchmark predicates
   --max-open-collections <n>
+  --main-cache-kib <n>                Main page-cache budget per collection (16384)
+  --blob-cache-kib <n>                Blob page-cache budget per collection (8192)
+  --mmap-bytes <n>                    Main memory-map limit; 0 disables (268435456)
   --storage-path <path>               Use and retain a new or empty directory
   --keep                              Retain the default temporary directory
 
@@ -184,7 +202,11 @@ function parseArguments(argv) {
     throw new Error(`--preset must be one of: ${Object.keys(presets).join(', ')}`)
   }
 
-  const configuration = { ...presets[preset], preset, keep }
+  const configuration = {
+    streamBatchSize: 100, slowReaderRows: 50, slowReaderDelayMs: 1,
+    mainCacheKiB: 16384, blobCacheKiB: 8192, mmapBytes: 268435456,
+    ...presets[preset], preset, keep,
+  }
   for (const [key, value] of Object.entries(raw)) {
     if (key === 'preset') continue
     if (Object.hasOwn(numericOptions, key)) {
@@ -425,6 +447,97 @@ async function measuredCall(samples, operation) {
   return result
 }
 
+async function measureMemory(operation) {
+  const baselineBytes = process.memoryUsage()
+  const sampledPeakBytes = { ...baselineBytes }
+  const sample = () => {
+    const current = process.memoryUsage()
+    for (const key of Object.keys(sampledPeakBytes)) {
+      sampledPeakBytes[key] = Math.max(sampledPeakBytes[key], current[key])
+    }
+    return current
+  }
+  const timer = setInterval(sample, 10)
+  timer.unref()
+  try {
+    const result = await operation()
+    const endBytes = sample()
+    return { ...result, memory: { sampleIntervalMs: 10, baselineBytes, sampledPeakBytes, endBytes } }
+  } finally {
+    clearInterval(timer)
+  }
+}
+
+async function streamPhase(database, configuration) {
+  const started = performance.now()
+  let firstRowMs = null
+  let count = 0
+  for await (const document of database.stream(
+    'FIND benchmark_documents ORDER BY ordinal', [], { batchSize: configuration.streamBatchSize },
+  )) {
+    firstRowMs ??= performance.now() - started
+    if (document.ordinal !== count || document.key !== documentKey(count)) {
+      throw new Error(`Stream verification failed at row ${count}`)
+    }
+    count++
+  }
+  if (count !== configuration.documents) throw new Error('Stream returned an incomplete result')
+  const durationMs = performance.now() - started
+  return {
+    ...summarizePhase({ items: count, itemUnit: 'documents', samples: [durationMs], sampleUnit: 'stream', durationMs }),
+    firstRowMs: rounded(firstRowMs),
+    batchSize: configuration.streamBatchSize,
+  }
+}
+
+async function slowReaderWriterPhase(database, configuration) {
+  const rowLimit = Math.min(configuration.documents, configuration.slowReaderRows)
+  const iterator = database.stream(
+    'FIND benchmark_documents ORDER BY ordinal LIMIT ?', [rowLimit], { batchSize: 1 },
+  )[Symbol.asyncIterator]()
+  const started = performance.now()
+  let writer
+  let count = 0
+  let writeDurationMs
+  let writerError
+  try {
+    const first = await iterator.next()
+    if (first.done) throw new Error('Slow reader received no rows')
+    const writeStarted = performance.now()
+    writer = database.execute(
+      'UPDATE benchmark_documents SET revision = revision + 1 WHERE ordinal = 0',
+    ).then((rows) => {
+      writeDurationMs = performance.now() - writeStarted
+      if (rows.length !== 1) writerError = new Error('Queued writer updated an unexpected row count')
+    }, (error) => { writerError = error })
+    let next = first
+    while (!next.done) {
+      if (next.value.ordinal !== count) throw new Error('Slow reader returned unexpected row order')
+      count++
+      if (configuration.slowReaderDelayMs) {
+        await new Promise((resolve) => setTimeout(resolve, configuration.slowReaderDelayMs))
+      }
+      next = await iterator.next()
+    }
+    await writer
+    if (writerError) throw writerError
+    if (count !== rowLimit) throw new Error('Slow reader returned an incomplete result')
+    return {
+      ...summarizePhase({
+        items: 1, itemUnit: 'writes', samples: [writeDurationMs], sampleUnit: 'write',
+        durationMs: performance.now() - started,
+      }),
+      rowsConsumed: count,
+      batchSize: 1,
+      consumerDelayMs: configuration.slowReaderDelayMs,
+      writeDurationMs: rounded(writeDurationMs),
+    }
+  } finally {
+    await iterator.return()
+    await writer
+  }
+}
+
 function chunks(values, size) {
   const result = []
   for (let offset = 0; offset < values.length; offset += size) {
@@ -611,6 +724,11 @@ async function runBenchmark(configuration) {
       busyTimeoutMs: configuration.busyTimeoutMs,
       durability: configuration.durability,
       fieldIndexes: fieldIndexPolicy(configuration.fieldIndexes),
+      sqliteCache: {
+        mainKiB: configuration.mainCacheKiB,
+        blobKiB: configuration.blobCacheKiB,
+        mmapBytes: configuration.mmapBytes,
+      },
     }
     // In-memory collections cannot be evicted because reopening one would lose
     // its data. The public API therefore deliberately rejects this option for
@@ -620,11 +738,13 @@ async function runBenchmark(configuration) {
     }
     database = createIdb(databaseOptions)
     const phases = {
-      insert: await insertPhase(database, documents, configuration),
-      pointQuery: await pointQueryPhase(database, workload),
-      rangeQuery: await rangeQueryPhase(database, workload),
-      update: await updatePhase(database, workload),
-      cacheChurn: await cacheChurnPhase(database, configuration),
+      insert: await measureMemory(() => insertPhase(database, documents, configuration)),
+      pointQuery: await measureMemory(() => pointQueryPhase(database, workload)),
+      rangeQuery: await measureMemory(() => rangeQueryPhase(database, workload)),
+      update: await measureMemory(() => updatePhase(database, workload)),
+      stream: await measureMemory(() => streamPhase(database, configuration)),
+      slowReaderWriter: await measureMemory(() => slowReaderWriterPhase(database, configuration)),
+      cacheChurn: await measureMemory(() => cacheChurnPhase(database, configuration)),
     }
     const [sqliteRuntime] = await database.execute(
       'QUERY ON benchmark_documents SELECT sqlite_version() AS sqliteVersion',
@@ -656,10 +776,14 @@ async function runBenchmark(configuration) {
         cacheChurnQueries: configuration.cacheChurnQueries,
         payloadBytes: configuration.payloadBytes,
         seed: configuration.seed,
+        streamBatchSize: configuration.streamBatchSize,
+        slowReaderRows: configuration.slowReaderRows,
+        slowReaderDelayMs: configuration.slowReaderDelayMs,
         databaseOptions: {
           busyTimeoutMs: configuration.busyTimeoutMs,
           durability: configuration.durability,
           fieldIndexes: configuration.fieldIndexes,
+          sqliteCache: databaseOptions.sqliteCache,
           maxOpenCollections: storage.kind === 'memory'
             ? null
             : configuration.maxOpenCollections,
@@ -675,6 +799,9 @@ async function runBenchmark(configuration) {
         'Document generation, query selection, warmups, and cache-churn setup are excluded from phase timings.',
         'Latency percentiles summarize individual API calls; insert latency samples are batches.',
         'Use identical configuration and comparable idle hardware when comparing reports.',
+        'Memory is process-wide and sampled every 10 ms; peaks are estimates and include warmup/setup within each phase.',
+        'The slow-reader phase measures one writer queued on the same engine and collection; it is not a cross-process contention benchmark.',
+        'Stream and slow-reader percentiles each describe one sample; repeat runs for a latency distribution.',
       ],
     }
   } catch (error) {
@@ -729,7 +856,7 @@ function printHuman(report) {
   console.log(`Storage: ${storage.kind} ${storage.path}${storageDisposition}`)
   console.log('')
 
-  const headers = ['Phase', 'Items', 'Calls', 'Total ms', 'Items/s', 'p50 ms', 'p95 ms', 'p99 ms']
+  const headers = ['Phase', 'Items', 'Calls', 'Total ms', 'Items/s', 'p50 ms', 'p95 ms', 'p99 ms', 'Peak RSS MiB']
   const rows = Object.entries(report.phases).map(([name, phase]) => [
     name,
     formatNumber(phase.items, 0),
@@ -739,6 +866,7 @@ function printHuman(report) {
     formatNumber(phase.latencyMs.p50, 3),
     formatNumber(phase.latencyMs.p95, 3),
     formatNumber(phase.latencyMs.p99, 3),
+    formatNumber(phase.memory.sampledPeakBytes.rss / 1048576, 1),
   ])
   const widths = headers.map((header, index) => Math.max(
     header.length,

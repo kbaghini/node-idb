@@ -17,6 +17,38 @@ import sqlite3 from 'sqlite3'
 
 import { createIdb } from 'node-idb'
 
+test('SQLite cache settings validate, survive eviction, and leave readonly storage unchanged', async () => {
+  for (const sqliteCache of [null, [], { typo: 1 }, { mainKiB: 0 }, { blobKiB: -1 }, { mmapBytes: -1 }, { mainKiB: 1.5 }]) {
+    assert.throws(() => createIdb({ storagePath: ':memory:', sqliteCache }), /sqliteCache/)
+  }
+  const root = await mkdtemp(path.join(os.tmpdir(), 'node-idb-cache-settings-'))
+  const sqliteCache = { mainKiB: 1024, blobKiB: 512, mmapBytes: 0 }
+  let database = createIdb({ storagePath: root, maxOpenCollections: 1, sqliteCache })
+  try {
+    for (const collection of ['alpha', 'beta', 'alpha']) {
+      await database.execute(`INSERT INTO ${collection}`, { value: 1 })
+      const [row] = await database.execute(`QUERY ON ${collection} SELECT * FROM pragma_cache_size`)
+      assert.equal(row.cache_size, -1024)
+      const [blobRow] = await database.execute(`QUERY ON ${collection} SELECT * FROM pragma_cache_size('blobs')`)
+      assert.equal(blobRow.cache_size, -512)
+    }
+    const diagnostics = await database.diagnostics()
+    assert.deepEqual(diagnostics.sqliteCache, sqliteCache)
+    assert.deepEqual(diagnostics.openCollections[0].sqliteCache, sqliteCache)
+    assert.ok(Object.isFrozen(diagnostics.sqliteCache))
+    await database.close()
+    const before = await snapshotDirectory(root)
+    database = createIdb({ storagePath: root, mode: 'readonly', sqliteCache })
+    assert.equal((await database.execute('FIND alpha')).length, 2)
+    assert.deepEqual((await database.diagnostics()).sqliteCache, sqliteCache)
+    await database.close()
+    assert.deepEqual(await snapshotDirectory(root), before)
+  } finally {
+    await database.close()
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 /** @param {string} target */
 async function exists(target) {
   try {

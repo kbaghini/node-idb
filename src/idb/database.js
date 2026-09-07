@@ -1,6 +1,7 @@
 // @ts-check
 
 import sqlite3 from 'sqlite3'
+import { commitWithCancellationBoundary, throwIfAborted } from './operation.js'
 
 /** @typedef {import('sqlite3').Database} Database */
 
@@ -117,7 +118,7 @@ export async function transaction(database, operation) {
   await exec(database, 'BEGIN IMMEDIATE')
   try {
     const result = await operation()
-    await exec(database, 'COMMIT')
+    await commitWithCancellationBoundary(database, () => exec(database, 'COMMIT'))
     return result
   } catch (error) {
     try {
@@ -126,6 +127,39 @@ export async function transaction(database, operation) {
       // Preserve the operation error; SQLite may already have rolled back.
     }
     throw error
+  }
+}
+
+/**
+ * Step one prepared statement without re-running it or buffering its full result.
+ * Finalization also runs when a consumer stops or an operation is interrupted.
+ */
+export async function* iterateBatches(database, sql, parameters, batchSize, signal) {
+  const statement = await new Promise((resolve, reject) => {
+    const prepared = database.prepare(sql, parameters, (error) => {
+      if (error) reject(error)
+      else resolve(prepared)
+    })
+  })
+  try {
+    while (true) {
+      const rows = []
+      while (rows.length < batchSize) {
+        throwIfAborted(signal)
+        const row = await new Promise((resolve, reject) => {
+          // Do not rebind parameters: get() then advances the existing cursor.
+          statement.get((error, value) => error ? reject(error) : resolve(value))
+        })
+        if (row === undefined) break
+        rows.push(row)
+      }
+      if (rows.length) yield rows
+      if (rows.length < batchSize) break
+    }
+  } finally {
+    await new Promise((resolve, reject) => {
+      statement.finalize((error) => error ? reject(error) : resolve())
+    })
   }
 }
 

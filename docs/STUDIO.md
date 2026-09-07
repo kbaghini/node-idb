@@ -132,6 +132,15 @@ Extended JSON markers for values JSON cannot represent:
 
 ## Query tutorial
 
+Use **Cancel query** to stop a running read. Switching collections or starting
+a replacement read also cancels obsolete requests; late responses cannot
+overwrite the currently selected collection. Cancellation applies to reads,
+not to the Write panel's explicit mutations.
+
+Query rows initially show compact previews. Expand a row to build its typed
+detail tree on demand, keeping large result sets responsive. Preview generation
+also stops at its visible prefix instead of copying the entire document.
+
 Studio accepts bounded, single-collection, canonical `SELECT` queries. Start
 with complete documents:
 
@@ -238,6 +247,14 @@ write exercise, code map, and safe rerun rules.
 | `maxRows` | `500` | Maximum rows in one query response or document page; maximum `10_000` |
 | `bodyLimitBytes` | `2 MiB` | Maximum JSON request body; maximum `64 MiB` |
 | `queryTimeoutMs` | `10_000` | Database operation deadline; maximum ten minutes |
+| `maxOpenCollections` | `16` | Retained collection connections per discovered database; maximum 10,000 |
+| `sqliteCache` | Core defaults | Per-collection `mainKiB`, `blobKiB`, and `mmapBytes` settings; supported in readonly mode |
+
+For example, `sqliteCache: { mainKiB: 4096, blobKiB: 2048, mmapBytes: 0 }`
+requests smaller page caches and disables main-file memory mapping. Diagnostics
+shows these configured budgets separately from storage size. They are not
+measured process memory usage or hard memory caps. `state.version` reports the
+installed package version, also available in the mode badge's tooltip.
 
 The returned handle exposes `url`, `host`, the actual `port`, resolved
 `rootPath`, `writable`, `closed`, `refresh()`, and `close()`.

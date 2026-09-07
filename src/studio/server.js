@@ -9,16 +9,19 @@ import {
   realpath,
 } from 'node:fs/promises'
 import { createServer } from 'node:http'
+import { createRequire } from 'node:module'
 import path from 'node:path'
 import { performance } from 'node:perf_hooks'
 import { fileURLToPath } from 'node:url'
 
 import { createIdb } from '../idb/index.js'
+import { normalizeSqliteCache } from '../idb/cache-options.js'
 import { inspectStorage } from '../idb/inspect.js'
 import { parseSql } from '../idb/sql.js'
 import { decodeStudioValue, encodeStudioValue } from './codec.js'
 
 const host = '127.0.0.1'
+const packageVersion = createRequire(import.meta.url)('../../package.json').version
 const collectionPattern = /^(?=.{1,128}$)(?=.*[A-Za-z0-9_])[A-Za-z0-9_-]+$/
 const publicDirectory = fileURLToPath(new URL('./public/', import.meta.url))
 const staticAssets = Object.freeze({
@@ -36,6 +39,8 @@ const staticAssets = Object.freeze({
  *   maxRows?: number,
  *   bodyLimitBytes?: number,
  *   queryTimeoutMs?: number,
+ *   sqliteCache?: { mainKiB?: number, blobKiB?: number, mmapBytes?: number },
+ *   maxOpenCollections?: number,
  * }} StudioOptions
  * @typedef {{
  *   id: string,
@@ -109,7 +114,7 @@ function normalizeOptions(value) {
   const options = /** @type {Record<string, any>} */ (value)
   assertKnownKeys(
     options,
-    ['rootPath', 'port', 'writable', 'maxRows', 'bodyLimitBytes', 'queryTimeoutMs'],
+    ['rootPath', 'port', 'writable', 'maxRows', 'bodyLimitBytes', 'queryTimeoutMs', 'sqliteCache', 'maxOpenCollections'],
     'startStudio option',
   )
   const rootPath = nonEmptyString(options.rootPath, 'rootPath')
@@ -138,6 +143,8 @@ function normalizeOptions(value) {
     maxRows,
     bodyLimitBytes,
     queryTimeoutMs,
+    sqliteCache: normalizeSqliteCache(options.sqliteCache),
+    maxOpenCollections: boundedPositiveInteger(options.maxOpenCollections ?? 16, 'maxOpenCollections', 10000),
   })
 }
 
@@ -472,6 +479,7 @@ export async function startStudioServer(options) {
 
   function publicState() {
     return Object.freeze({
+      version: packageVersion,
       writable: configuration.writable,
       rootPath: rootRealPath,
       scannedAt,
@@ -566,6 +574,8 @@ export async function startStudioServer(options) {
       const engine = createIdb(/** @type {any} */ ({
         storagePath: entry.realPath,
         mode: configuration.writable ? 'readwrite' : 'readonly',
+        sqliteCache: configuration.sqliteCache,
+        maxOpenCollections: configuration.maxOpenCollections,
       }))
       const current = databases.get(entry.id)
       if (!current || current.fingerprint !== entry.fingerprint) {
@@ -915,6 +925,7 @@ export async function startStudioServer(options) {
           fieldIndexes: diagnostics.fieldIndexes,
           operations: diagnostics.operations,
           cache: diagnostics.cache,
+          sqliteCache: diagnostics.sqliteCache,
           collections: diagnostics.collections,
           openCollections: diagnostics.openCollections.map((collection) => {
             const { databasePath: _databasePath, blobPath: _blobPath, ...safe } = collection

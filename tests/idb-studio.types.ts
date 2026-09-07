@@ -15,6 +15,8 @@ const options = {
   maxRows: 250,
   bodyLimitBytes: 1_048_576,
   queryTimeoutMs: 5_000,
+  sqliteCache: { mainKiB: 1024, blobKiB: 512, mmapBytes: 0 },
+  maxOpenCollections: 2,
 } satisfies StudioOptions
 
 const wire: StudioWireValue = encodeStudioValue({

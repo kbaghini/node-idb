@@ -40,7 +40,18 @@ export type FieldIndexes = "auto" | "all" | "none" | AutoFieldIndexes | {
   rules?: readonly FieldIndexRule[];
 };
 
+export interface SqliteCacheOptions {
+  /** Suggested main page-cache budget per collection, in KiB. Default: 16384. */
+  mainKiB?: number;
+  /** Suggested blob page-cache budget per collection, in KiB. Default: 8192. */
+  blobKiB?: number;
+  /** Requested main memory-map limit in bytes; 0 disables it. Default: 268435456. */
+  mmapBytes?: number;
+}
+
 export interface IdbBaseOptions<TStoragePath extends string> {
+  /** Connection-local settings; not a hard process memory cap. Allowed in readonly mode. */
+  sqliteCache?: SqliteCacheOptions;
   /** One database directory. Relative paths resolve when createIdb is called. */
   storagePath: TStoragePath;
   /** How long SQLite waits for a conflicting lock. Defaults to 10,000 ms. */
@@ -115,9 +126,9 @@ export interface BackupResult {
 }
 
 export interface ExecutionOptions {
-  /** Cooperatively cancels queued or running SQLite work. */
+  /** Cooperatively cancels queued/running work. Mutations stop accepting cancellation at COMMIT dispatch. */
   signal?: AbortSignal;
-  /** Aborts the operation after this many milliseconds. */
+  /** Requests cancellation after this many milliseconds; an in-flight commit reports its actual outcome. */
   timeoutMs?: number;
 }
 
@@ -127,7 +138,7 @@ export interface ExecuteOptions extends ExecutionOptions {
 }
 
 export interface StreamOptions extends ExecutionOptions {
-  /** Rows/documents fetched per SQLite page. Defaults to 100; maximum 10,000. */
+  /** Rows/documents buffered per cursor batch. Defaults to 100; maximum 10,000. */
   batchSize?: number;
 }
 
@@ -221,6 +232,7 @@ export interface RestoreBackupResult {
 }
 
 export interface CollectionDiagnostics {
+  readonly sqliteCache: Readonly<Required<SqliteCacheOptions>>;
   readonly collection: string;
   readonly schemaVersion: number;
   readonly mode: IdbMode;
@@ -297,6 +309,7 @@ export interface OptimizeIndexesResult {
 }
 
 export interface IdbDiagnostics {
+  readonly sqliteCache: Readonly<Required<SqliteCacheOptions>>;
   readonly storagePath: string;
   readonly mode: IdbMode;
   readonly state: "open" | "closing" | "closed";
