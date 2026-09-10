@@ -1,0 +1,117 @@
+{
+  "node": "v24.11.1",
+  "cpu": "13th Gen Intel(R) Core(TM) i9-13900H",
+  "documents": 100000,
+  "pageSize": 25,
+  "repeats": 30,
+  "runs": [
+    {
+      "offset": 25,
+      "round": 0,
+      "mode": "offset",
+      "ms": 57.903499999999894
+    },
+    {
+      "offset": 25,
+      "round": 0,
+      "mode": "cursor",
+      "ms": 52.477800000000116
+    },
+    {
+      "offset": 25,
+      "round": 1,
+      "mode": "cursor",
+      "ms": 40.303699999999935
+    },
+    {
+      "offset": 25,
+      "round": 1,
+      "mode": "offset",
+      "ms": 25.337499999999636
+    },
+    {
+      "offset": 25,
+      "round": 2,
+      "mode": "offset",
+      "ms": 34.68070000000034
+    },
+    {
+      "offset": 25,
+      "round": 2,
+      "mode": "cursor",
+      "ms": 31.471799999999803
+    },
+    {
+      "offset": 50000,
+      "round": 0,
+      "mode": "offset",
+      "ms": 73.03910000000042
+    },
+    {
+      "offset": 50000,
+      "round": 0,
+      "mode": "cursor",
+      "ms": 45.17079999999987
+    },
+    {
+      "offset": 50000,
+      "round": 1,
+      "mode": "cursor",
+      "ms": 36.062700000000405
+    },
+    {
+      "offset": 50000,
+      "round": 1,
+      "mode": "offset",
+      "ms": 83.60629999999946
+    },
+    {
+      "offset": 50000,
+      "round": 2,
+      "mode": "offset",
+      "ms": 68.0616
+    },
+    {
+      "offset": 50000,
+      "round": 2,
+      "mode": "cursor",
+      "ms": 50.55290000000059
+    },
+    {
+      "offset": 99975,
+      "round": 0,
+      "mode": "offset",
+      "ms": 77.5694999999996
+    },
+    {
+      "offset": 99975,
+      "round": 0,
+      "mode": "cursor",
+      "ms": 24.46259999999984
+    },
+    {
+      "offset": 99975,
+      "round": 1,
+      "mode": "cursor",
+      "ms": 27.123199999999997
+    },
+    {
+      "offset": 99975,
+      "round": 1,
+      "mode": "offset",
+      "ms": 63.69409999999971
+    },
+    {
+      "offset": 99975,
+      "round": 2,
+      "mode": "offset",
+      "ms": 64.7573999999995
+    },
+    {
+      "offset": 99975,
+      "round": 2,
+      "mode": "cursor",
+      "ms": 25.49120000000039
+    }
+  ]
+}

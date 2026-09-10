@@ -1,5 +1,20 @@
 # node-idb benchmarks
 
+Run `node benchmarks/product-projection.js` to compare full product documents
+with selected card fields, including read/serialization time and JSON/gzip size.
+See the [results and fixture limitations](results/2026-09-10-product-projection.md).
+
+Run `node benchmarks/cursor-pages.js` to compare early and deep cursor/offset
+pages on 100,000 documents. See the [measurements](results/2026-09-10-cursor-pages.md).
+
+Run `node benchmarks/prepared-reads.js` for a focused comparison of native
+SQLite read preparation versus connection-local prepared statement reuse.
+See the [results and scope](results/2026-09-10-prepared-reads.md).
+
+For the repeatable SQL syntax-cache and 10,000-product SKU-index comparison,
+run `node benchmarks/query-cache.js`. See the
+[measurements and limitations](results/2026-09-10-query-cache.md).
+
 This directory contains a deterministic benchmark harness for measuring changes
 to node-idb. It exercises seven separate phases:
 

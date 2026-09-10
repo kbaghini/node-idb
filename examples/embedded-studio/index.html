@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Workspace · Embedded Studio demo</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #080e15; color: #edf4fa; font: 14px system-ui, sans-serif; }
+    header { height: 72px; padding: 16px 24px; display: flex; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid #263748; }
+    h1 { font-size: 18px; margin: 0 0 4px; } p { color: #a1b7cb; margin: 0; font-size: 12px; }
+    .badge { padding: 7px 11px; border: 1px solid #325b4c; border-radius: 20px; color: #9fe4c4; white-space: nowrap; font-size: 12px; }
+    iframe { display: block; width: 100%; height: calc(100dvh - 72px); border: 0; }
+    @media(max-width:500px) { header { padding: 12px; } .badge { display: none; } }
+  </style>
+</head>
+<body>
+  <header><div><h1>Workspace administration</h1><p>Host application session · Database access limited to demo</p></div><span class="badge">Read-only demo</span></header>
+  <iframe src="/admin/studio/" title="Database Studio" referrerpolicy="no-referrer"></iframe>
+</body>
+</html>

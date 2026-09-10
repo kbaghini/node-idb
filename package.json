@@ -1,6 +1,6 @@
 {
   "name": "node-idb",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "An embedded SQLite document store for Node.js with typed values, SQL-style queries, automatic indexes, and a local browser Studio.",
   "type": "module",
   "main": "./src/index.js",

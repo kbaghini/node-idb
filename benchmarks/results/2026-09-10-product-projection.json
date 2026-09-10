@@ -1,0 +1,112 @@
+{
+  "node": "v24.11.1",
+  "platform": "win32",
+  "cpu": "13th Gen Intel(R) Core(TM) i9-13900H",
+  "documents": 1000,
+  "pageSize": 25,
+  "repeats": 30,
+  "workloads": [
+    {
+      "descriptionLength": 128,
+      "samples": {
+        "full": {
+          "jsonBytes": 7105,
+          "gzipBytes": 754
+        },
+        "projected": {
+          "jsonBytes": 2570,
+          "gzipBytes": 468
+        }
+      },
+      "runs": [
+        {
+          "round": 0,
+          "mode": "full",
+          "readMs": 114.6346000000002,
+          "serializeMs": 1.2547000000000708
+        },
+        {
+          "round": 0,
+          "mode": "projected",
+          "readMs": 83.27650000000006,
+          "serializeMs": 1.23599999999999
+        },
+        {
+          "round": 1,
+          "mode": "projected",
+          "readMs": 76.5790000000004,
+          "serializeMs": 1.3983999999998105
+        },
+        {
+          "round": 1,
+          "mode": "full",
+          "readMs": 114.15069999999992,
+          "serializeMs": 0.904399999999896
+        },
+        {
+          "round": 2,
+          "mode": "full",
+          "readMs": 110.91029999999989,
+          "serializeMs": 0.8985000000002401
+        },
+        {
+          "round": 2,
+          "mode": "projected",
+          "readMs": 78.61919999999964,
+          "serializeMs": 1.1300000000003365
+        }
+      ]
+    },
+    {
+      "descriptionLength": 16384,
+      "samples": {
+        "full": {
+          "jsonBytes": 413505,
+          "gzipBytes": 2257
+        },
+        "projected": {
+          "jsonBytes": 2570,
+          "gzipBytes": 468
+        }
+      },
+      "runs": [
+        {
+          "round": 0,
+          "mode": "full",
+          "readMs": 117.60390000000098,
+          "serializeMs": 18.050899999999274
+        },
+        {
+          "round": 0,
+          "mode": "projected",
+          "readMs": 80.50429999999983,
+          "serializeMs": 1.372399999999061
+        },
+        {
+          "round": 1,
+          "mode": "projected",
+          "readMs": 70.98629999999957,
+          "serializeMs": 1.245899999999665
+        },
+        {
+          "round": 1,
+          "mode": "full",
+          "readMs": 137.20349999999917,
+          "serializeMs": 21.04809999999975
+        },
+        {
+          "round": 2,
+          "mode": "full",
+          "readMs": 116.30169999999998,
+          "serializeMs": 15.367800000001353
+        },
+        {
+          "round": 2,
+          "mode": "projected",
+          "readMs": 69.43379999999843,
+          "serializeMs": 1.0314000000016676
+        }
+      ]
+    }
+  ]
+}

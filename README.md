@@ -88,11 +88,15 @@ Open the complete printed URL and select `my-app`, then `people`. Browse typed
 values, inspect document structure, and run `SELECT` queries with expandable
 results and cancellation.
 
+The **Data tools** tab adds typed data packages, import previews, collection
+comparison, review receipts, and managed backup/recovery workflows.
+
 Studio binds to `127.0.0.1`, protects access with a launch token, and starts
 **read-only**. Explicitly enable `writable: true` for editing. Keep the process
 running while using Studio; stop it with Ctrl+C.
 
 [Studio guide](https://github.com/kbaghini/node-idb/blob/master/docs/STUDIO.md)
+· [Embed in your app](https://github.com/kbaghini/node-idb/blob/master/docs/EMBED.md)
 · [Phonebook demo with 12,000+ documents](https://github.com/kbaghini/node-idb/tree/master/examples/phonebook-studio)
 
 ## Is it a fit?

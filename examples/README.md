@@ -42,6 +42,10 @@ you want to start the examples from an empty database.
 | [`13-automatic-indexing.js`](./13-automatic-indexing.js) | Adaptive index learning, hard rules, diagnostics, and dry-run evaluation |
 | [`14-local-studio.js`](./14-local-studio.js) | Seed two documents and start the token-protected local browser Studio |
 | [`15-collection-structure.js`](./15-collection-structure.js) | Inspect an immutable observed collection tree or one nested sub-field |
+| [`16-studio-data-tools.js`](./16-studio-data-tools.js) | Local export/import, unique-key comparisons, review receipts, and backup/recovery |
+| [`17-cursor-pagination.js`](./17-cursor-pagination.js) | Product pages using an object-ID cursor and one-row lookahead |
+| [`18-product-cards.js`](./18-product-cards.js) | Lightweight product cards with full details loaded separately by indexed SKU |
+| [`embedded-studio/`](./embedded-studio/) | Same-origin iframe, session verification, path-preserving proxy, and per-user database access |
 | [`phonebook-studio/`](./phonebook-studio/) | A reviewable multi-collection Phonebook project with 12,000+ related documents and a Studio launcher |
 
 The examples intentionally use the public `node-idb` and `node-idb/studio`

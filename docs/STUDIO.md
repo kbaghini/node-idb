@@ -2,6 +2,9 @@
 
 [Package overview](../README.md) · [Technical guide](GUIDE.md) · [Examples](../examples/README.md)
 
+To place Studio inside your own application's iframe, see the
+[Embed integration guide](EMBED.md) and its runnable host-app example.
+
 Studio is the local browser interface included with `node-idb`. One install
 provides both entry points:
 
@@ -11,8 +14,27 @@ import { startStudio } from "node-idb/studio";
 ```
 
 It is best for development, data review, query learning, diagnostics, and
-deliberate local corrections. It is not a remotely hosted, multi-user database
-administration service.
+deliberate local corrections. Application hosting requires explicit Embed mode
+and the host application's authentication, permissions and HTTPS proxy.
+
+## Cursor pagination
+
+Browse uses cursor pagination for Next/Previous in both Newest and Oldest order.
+Changing collection, order, or page size restarts at the first page. The page
+summary shows the traversed range, without computing an exact collection total
+on every request. Concurrent edits can change page contents; navigation is not
+a frozen snapshot. Reload refreshes the current page from its saved boundary.
+
+For custom clients, `POST /api/documents/list` accepts `cursor: null` for the
+first page, then the returned numeric `nextCursor` for the next page. Keep
+`databaseId`, `collection`, `order` and `limit` consistent while navigating.
+`hasMore` comes from one extra ID; cursor responses have `total: null` and
+`offset: null`. Do not combine `cursor` and `offset`. Omitting `cursor` retains
+the existing offset API and exact total. Existing authentication applies to
+both modes; a cursor is only an ID boundary, never an access credential.
+
+See the [storefront example](../examples/17-cursor-pagination.js) and
+[100,000-document measurements](../benchmarks/results/2026-09-10-cursor-pages.md).
 
 ## Contents
 
@@ -23,6 +45,7 @@ administration service.
 - [Query tutorial](#query-tutorial)
 - [Structure tutorial](#structure-tutorial)
 - [Write mode](#write-mode)
+- [Data tools](#data-tools)
 - [Phonebook tutorial](#phonebook-tutorial)
 - [Configuration](#configuration)
 - [Security model](#security-model)
@@ -77,9 +100,103 @@ After opening the printed URL:
 5. In **Diagnostics**, review storage size, cache state, indexes, and integrity.
 6. If the launcher explicitly enabled writes, use **Write** for one deliberate
    insert, update, replace, or confirmed delete.
+7. Use **Data tools** to transfer collections, compare data, review shared
+   packages, and manage backups. See the workflow below for its limits.
+
+## Data tools
+
+These local workflows are available in the **Data tools** tab. They do not
+require a separate Studio package or an account.
+
+### Export and import
+
+Select a collection, optionally add a review note, and choose **Download
+package**. The versioned JSON package preserves dates, big integers, binary
+values, and nested data using Studio's tagged transport format. Internal
+object IDs are not exported; imported documents receive new IDs.
+
+To import, choose that package or a plain JSON array of objects, then select
+**Preview file**. The preview shows the destination, count, package fingerprint,
+and up to three expandable samples. Check the review checkbox and choose
+**Append documents**. The entire batch is one transaction. Existing documents
+are not replaced or merged; importing the same data again with a new preview
+will create additional documents. Invalid data rolls back the whole import.
+
+Plain JSON follows the same typed-envelope conventions as the document editor.
+An ordinary JSON date string stays a string. Use a Studio export when native
+type fidelity matters.
+
+Exports are complete collection snapshots, capped by `maxTransferRows` (default
+10,000) and `bodyLimitBytes` (default 2 MiB, with room reserved for metadata).
+Oversized exports fail rather than silently omitting rows. Import requests use
+the same limits. For larger transfers, configure larger limits deliberately or
+use the core streaming API. This browser workflow holds a bounded package in
+memory; it is not a streaming file importer.
+
+### Share and review locally
+
+Send a package to a teammate through your usual file-sharing channel. They can
+preview it in their own Studio and download a **review receipt** containing its
+SHA-256 fingerprint, destination, document count, and whether that session
+applied it. Review notes and receipts are ordinary user-editable files, not
+signed approvals or an authenticated audit trail. Studio does not transmit
+them to teammates automatically.
+
+Preview tickets expire after 10 minutes and can be applied only once to the
+reviewed destination. A Studio restart clears tickets. Changing selection or
+choosing another file clears the visible review. Read-only sessions can review
+and export; applying an import requires `writable: true`.
+
+This first workflow supports append packages. It does not yet apply shared
+update/delete plans or provide user roles, remote collaboration, or approval
+enforcement.
+
+### Compare collections
+
+Choose the target collection and a unique scalar field such as `sku` or
+`contact.email`. Studio reports added, removed, changed, and unchanged records.
+Expand differences to inspect before/after values. Object property ordering is
+ignored; array ordering and native value types remain significant. Missing or
+duplicate keys are rejected to avoid ambiguous matches.
+
+Counts cover both complete collections within the transfer limits; the first
+100 differences are displayed. Each collection is read in its own consistent
+snapshot, not in a transaction spanning both collections. Results are read-only
+and are not a synchronization plan.
+
+### Managed backups
+
+Enable a dedicated backup folder in your launcher:
+
+```js
+const studio = await startStudio({
+  rootPath: "./data",
+  backupPath: "./backups", // Outside rootPath; neither folder may contain the other.
+  writable: true,
+  port: 0,
+});
+```
+
+**Back up database** captures the selected database through the core verified
+backup API. **Refresh backups** lists managed snapshots; **Verify integrity**
+checks their hashes and SQLite integrity. **Restore as new database** verifies
+the snapshot and creates a separate `restored-…` database under the root. Refresh
+and select it in the navigator to inspect the recovered data. Existing live
+databases are never overwritten by this UI.
+
+Creating and verifying backups is allowed in read-only Studio when `backupPath`
+is explicitly configured; the source database remains read-only. Restoration
+requires writable mode. Backup consistency is per collection, not a single
+point in time across all collections. Operations obey `queryTimeoutMs`; increase
+it for larger snapshots. Scheduling, retention/deletion, and remote backup
+storage are not included.
 
 The browser tab does not own the server. Closing the tab does not stop Studio;
 stop its Node.js process or call `await studio.close()`.
+
+Navigate the main tabs with Left/Right arrows, Home, or End while a tab is
+focused. On narrow screens, **Hide/Show** in the database header collapses the
+navigator to leave more room for documents and tools.
 
 ## How database discovery works
 
@@ -263,15 +380,17 @@ The returned handle exposes `url`, `host`, the actual `port`, resolved
 
 ## Security model
 
-Studio combines loopback-only binding, a random 256-bit token for each launch,
+By default, Studio combines loopback-only binding, a random 256-bit token for each launch,
 strict host/origin checks, same-origin requests, a restrictive Content Security
 Policy, bounded bodies and responses, opaque catalog IDs, sanitized errors, and
 read-only-by-default database engines.
 
-Treat the complete printed URL like a short-lived password. Do not expose
-Studio through a reverse proxy, tunnel, port forwarding, public hostname, or
-published container port. Studio has no users, roles, TLS termination, tenant
-isolation, or remote-administration security model.
+Treat the complete printed local URL like a short-lived password. Do not expose
+the default token-based mode through a proxy, tunnel, or published port.
+For application hosting, explicitly configure [Embed mode](EMBED.md), which
+requires your application's authentication and per-user database grants.
+Your host application supplies login, permissions, TLS, and the reverse proxy;
+Studio continues to bind only to loopback. Backups remain local operator tools.
 
 ## Troubleshooting
 

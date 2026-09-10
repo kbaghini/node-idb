@@ -1,6 +1,7 @@
 // @ts-check
 
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
+import { AsyncLocalStorage } from 'node:async_hooks'
 import {
   lstat,
   mkdir,
@@ -19,6 +20,8 @@ import { normalizeSqliteCache } from '../idb/cache-options.js'
 import { inspectStorage } from '../idb/inspect.js'
 import { parseSql } from '../idb/sql.js'
 import { decodeStudioValue, encodeStudioValue } from './codec.js'
+import { createWorkspaceRoutes } from './workspace.js'
+import { normalizeBasePath, normalizeEmbed, authenticateEmbed } from './embed.js'
 
 const host = '127.0.0.1'
 const packageVersion = createRequire(import.meta.url)('../../package.json').version
@@ -41,6 +44,10 @@ const staticAssets = Object.freeze({
  *   queryTimeoutMs?: number,
  *   sqliteCache?: { mainKiB?: number, blobKiB?: number, mmapBytes?: number },
  *   maxOpenCollections?: number,
+ *   backupPath?: string,
+ *   maxTransferRows?: number,
+ *   basePath?: string,
+ *   embed?: import('./index.js').StudioEmbedOptions | false,
  * }} StudioOptions
  * @typedef {{
  *   id: string,
@@ -114,7 +121,7 @@ function normalizeOptions(value) {
   const options = /** @type {Record<string, any>} */ (value)
   assertKnownKeys(
     options,
-    ['rootPath', 'port', 'writable', 'maxRows', 'bodyLimitBytes', 'queryTimeoutMs', 'sqliteCache', 'maxOpenCollections'],
+    ['rootPath', 'port', 'writable', 'maxRows', 'bodyLimitBytes', 'queryTimeoutMs', 'sqliteCache', 'maxOpenCollections', 'backupPath', 'maxTransferRows', 'basePath', 'embed'],
     'startStudio option',
   )
   const rootPath = nonEmptyString(options.rootPath, 'rootPath')
@@ -138,9 +145,13 @@ function normalizeOptions(value) {
   )
   return Object.freeze({
     rootPath: path.resolve(rootPath),
+    basePath: normalizeBasePath(options.basePath),
+    embed: normalizeEmbed(options.embed),
     port: Number(port),
     writable: options.writable === true,
     maxRows,
+    maxTransferRows: boundedPositiveInteger(options.maxTransferRows ?? 10000, 'maxTransferRows', 100000),
+    backupPath: options.backupPath === undefined ? null : path.resolve(nonEmptyString(options.backupPath, 'backupPath')),
     bodyLimitBytes,
     queryTimeoutMs,
     sqliteCache: normalizeSqliteCache(options.sqliteCache),
@@ -277,6 +288,9 @@ function decodePathSegment(value, label) {
  */
 export async function startStudioServer(options) {
   const configuration = normalizeOptions(options)
+  const requestAccess = new AsyncLocalStorage()
+  const canWrite = () => configuration.writable && (!configuration.embed || requestAccess.getStore()?.writable === true)
+  const canSee = entry => !configuration.embed || requestAccess.getStore()?.databases.includes(entry.location === 'root' ? '.' : path.basename(entry.storagePath)) === true
   const maxResponseBytes = Math.min(
     128 * 1024 * 1024,
     Math.max(32 * 1024 * 1024, configuration.bodyLimitBytes * 4),
@@ -295,6 +309,9 @@ export async function startStudioServer(options) {
     throw new TypeError('Studio rootPath must be a directory')
   }
   const rootRealPath = await realpath(configuration.rootPath)
+  if (configuration.backupPath && (isWithin(configuration.rootPath, configuration.backupPath) || isWithin(configuration.backupPath, configuration.rootPath))) {
+    throw new TypeError('backupPath must be outside rootPath')
+  }
   const rootRealInfo = await lstat(rootRealPath)
   if (!rootRealInfo.isDirectory()) throw new TypeError('Studio rootPath must resolve to a directory')
 
@@ -480,18 +497,21 @@ export async function startStudioServer(options) {
   function publicState() {
     return Object.freeze({
       version: packageVersion,
-      writable: configuration.writable,
-      rootPath: rootRealPath,
+      writable: canWrite(),
+      embed: Boolean(configuration.embed),
+      backupsEnabled: !configuration.embed && configuration.backupPath !== null,
+      rootPath: configuration.embed ? '' : rootRealPath,
       scannedAt,
       catalogVersion,
       discovery: 'root-and-immediate-children',
       limits: Object.freeze({
         maxRows: configuration.maxRows,
+        maxTransferRows: configuration.maxTransferRows,
         bodyLimitBytes: configuration.bodyLimitBytes,
         maxResponseBytes,
         queryTimeoutMs: configuration.queryTimeoutMs,
       }),
-      databases: Object.freeze([...databases.values()].map((entry) => Object.freeze({
+      databases: Object.freeze([...databases.values()].filter(canSee).map((entry) => Object.freeze({
         id: entry.id,
         name: entry.name,
         location: entry.location,
@@ -504,7 +524,7 @@ export async function startStudioServer(options) {
           fieldIndexes: collection.fieldIndexes,
         }))),
       }))),
-      errors: discoveryErrors,
+      errors: configuration.embed ? [] : discoveryErrors,
     })
   }
 
@@ -514,7 +534,7 @@ export async function startStudioServer(options) {
       throw new TypeError('databaseId must be a non-empty string')
     }
     const entry = databases.get(value)
-    if (!entry) throw new HttpError(404, 'database_not_found', 'Database is not in the current Studio catalog')
+    if (!entry || !canSee(entry)) throw new HttpError(404, 'database_not_found', 'Database is not in the current Studio catalog')
     return entry
   }
 
@@ -635,7 +655,7 @@ export async function startStudioServer(options) {
   }
 
   function requireWritable() {
-    if (!configuration.writable) {
+    if (!canWrite()) {
       throw new HttpError(
         403,
         'studio_read_only',
@@ -755,11 +775,20 @@ export async function startStudioServer(options) {
       `localhost:${boundPort}`,
       ...(boundPort === 80 ? [host, 'localhost'] : []),
     ])
+    if (configuration.embed) expected.add(new URL(configuration.embed.publicOrigin).host)
     return expected.has(actual)
   }
 
   /** @param {import('node:http').IncomingMessage} request */
   function validOrigin(request) {
+    if (configuration.embed) {
+      const origin = request.headers.origin
+      if (origin !== undefined && origin !== configuration.embed.publicOrigin) return false
+      const navigation = ['GET', 'HEAD'].includes(request.method || 'GET') && request.headers['sec-fetch-dest'] === 'iframe'
+      if (request.headers['sec-fetch-site'] === 'cross-site' && !navigation) return false
+      if (!['GET', 'HEAD'].includes(request.method || 'GET') && request.headers['x-node-idb-studio'] !== '1') return false
+      return true
+    }
     if (request.headers['sec-fetch-site'] === 'cross-site') return false
     const origin = request.headers.origin
     if (origin === undefined) return true
@@ -781,14 +810,14 @@ export async function startStudioServer(options) {
   function secureHeaders(response, kind) {
     response.setHeader(
       'Content-Security-Policy',
-      "default-src 'self'; base-uri 'none'; connect-src 'self'; font-src 'self'; form-action 'self'; frame-ancestors 'none'; img-src 'self' data:; object-src 'none'; script-src 'self'; style-src 'self'",
+      `default-src 'self'; base-uri 'none'; connect-src 'self'; font-src 'self'; form-action 'self'; frame-ancestors ${configuration.embed ? configuration.embed.allowedParents.join(' ') : "'none'"}; img-src 'self' data:; object-src 'none'; script-src 'self'; style-src 'self'`,
     )
     response.setHeader('Cross-Origin-Opener-Policy', 'same-origin')
     response.setHeader('Cross-Origin-Resource-Policy', 'same-origin')
     response.setHeader('Permissions-Policy', 'camera=(), geolocation=(), microphone=()')
     response.setHeader('Referrer-Policy', 'no-referrer')
     response.setHeader('X-Content-Type-Options', 'nosniff')
-    response.setHeader('X-Frame-Options', 'DENY')
+    if (!configuration.embed) response.setHeader('X-Frame-Options', 'DENY')
     response.setHeader('Cache-Control', 'no-store')
   }
 
@@ -949,13 +978,18 @@ export async function startStudioServer(options) {
    * @param {URL} url
    * @param {AbortSignal} signal
    */
+  const routeWorkspace = createWorkspaceRoutes({ configuration, rootRealPath, findDatabase, knownCollection,
+    engineFor, requireWritable, readJson, requestObject, sendJson, HttpError, refreshCatalog,
+    currentSubject: () => requestAccess.getStore()?.subject || 'local' })
+
   async function routeApi(request, response, url, signal) {
-    if (!authenticated(request)) {
+    if (configuration.embed ? !requestAccess.getStore() : !authenticated(request)) {
       response.setHeader('WWW-Authenticate', 'Bearer realm="node-idb Studio"')
       throw new HttpError(401, 'unauthorized', 'A valid Studio launch token is required')
     }
     const method = request.method || 'GET'
     const pathname = url.pathname
+    if (await routeWorkspace(request, response, url, signal)) return
 
     if (method === 'GET' && pathname === '/api/state') {
       sendJson(response, 200, publicState())
@@ -964,9 +998,9 @@ export async function startStudioServer(options) {
     if (method === 'POST' && pathname === '/api/refresh') {
       const body = requestObject(await readJson(request, signal), 'refresh body')
       assertKnownKeys(body, [], 'refresh body property')
-      const state = await refreshCatalog()
+      await refreshCatalog()
       if (signal.aborted) throw signal.reason
-      sendJson(response, 200, state)
+      sendJson(response, 200, publicState())
       return
     }
     if (method === 'POST' && pathname === '/api/query') {
@@ -1018,7 +1052,7 @@ export async function startStudioServer(options) {
       const body = requestObject(await readJson(request, signal), 'document list body')
       assertKnownKeys(
         body,
-        ['databaseId', 'collection', 'limit', 'offset', 'order'],
+        ['databaseId', 'collection', 'limit', 'offset', 'order', 'cursor'],
         'document list body property',
       )
       const entry = findDatabase(body.databaseId)
@@ -1027,6 +1061,11 @@ export async function startStudioServer(options) {
         ? Math.min(50, configuration.maxRows)
         : boundedPositiveInteger(body.limit, 'limit', configuration.maxRows)
       const offset = body.offset ?? 0
+      const cursorMode = Object.hasOwn(body, 'cursor')
+      if (cursorMode && Object.hasOwn(body, 'offset')) {
+        throw new TypeError('cursor and offset cannot be combined')
+      }
+      const cursor = cursorMode && body.cursor !== null ? objectId(body.cursor) : null
       if (!Number.isSafeInteger(offset) || offset < 0) {
         throw new RangeError('offset must be a non-negative safe integer')
       }
@@ -1039,17 +1078,20 @@ export async function startStudioServer(options) {
       try {
         const [idRows, countRows] = await Promise.all([
           engine.execute(
-            `SELECT object_id FROM ${quoted} ORDER BY object_id ${order.toUpperCase()} LIMIT ? OFFSET ?`,
-            [limit, offset],
+            cursorMode
+              ? `SELECT object_id FROM ${quoted}${cursor === null ? '' : ` WHERE object_id ${order === 'asc' ? '>' : '<'} ?`} ORDER BY object_id ${order.toUpperCase()} LIMIT ?`
+              : `SELECT object_id FROM ${quoted} ORDER BY object_id ${order.toUpperCase()} LIMIT ? OFFSET ?`,
+            cursorMode ? (cursor === null ? [limit + 1] : [cursor, limit + 1]) : [limit, offset],
             { signal, timeoutMs: configuration.queryTimeoutMs },
           ),
-          engine.execute(
+          cursorMode ? Promise.resolve([]) : engine.execute(
             `SELECT COUNT(*) AS count FROM ${quoted}`,
             undefined,
             { signal, timeoutMs: configuration.queryTimeoutMs },
           ),
         ])
-        const ids = /** @type {{object_id: number}[]} */ (idRows).map((row) => objectId(row.object_id))
+        const hasMore = cursorMode ? idRows.length > limit : offset + idRows.length < Number(countRows[0]?.count || 0)
+        const ids = /** @type {{object_id: number}[]} */ (idRows).slice(0, limit).map((row) => objectId(row.object_id))
         const documents = []
         let responseBytes = 0
         for (let start = 0; start < ids.length; start += 25) {
@@ -1077,11 +1119,12 @@ export async function startStudioServer(options) {
         }
         sendJson(response, 200, {
           documents,
-          total: Number(/** @type {any[]} */ (countRows)[0]?.count || 0),
+          total: cursorMode ? null : Number(/** @type {any[]} */ (countRows)[0]?.count || 0),
           limit,
-          offset: Number(offset),
+          offset: cursorMode ? null : Number(offset),
           order,
-          hasMore: Number(offset) + ids.length < Number(/** @type {any[]} */ (countRows)[0]?.count || 0),
+          hasMore,
+          ...(cursorMode ? { nextCursor: hasMore ? ids.at(-1) : null } : {}),
         })
       } catch (error) {
         throw operationError(error, 'document_list_failed')
@@ -1280,6 +1323,13 @@ export async function startStudioServer(options) {
       throw error
     }
     response.statusCode = 200
+    if (asset.file === 'index.html') {
+      const classes = configuration.embed ? ['studio-embed', configuration.embed.hideHeader ? 'embed-hide-header' : '', configuration.embed.hideNavigator ? 'embed-hide-navigator' : ''].filter(Boolean).join(' ') : ''
+      body = Buffer.from(body.toString('utf8')
+        .replace('content="/" name="studio-base-path"', `content="${configuration.basePath}" name="studio-base-path"`)
+        .replace('Stored on this device', configuration.embed ? 'Application data' : 'Stored on this device')
+        .replace('<body>', `<body class="${classes}">`))
+    }
     response.setHeader('Content-Type', asset.type)
     response.setHeader('Content-Length', body.length)
     response.end(request.method === 'HEAD' ? undefined : body)
@@ -1303,8 +1353,14 @@ export async function startStudioServer(options) {
         if (!validHost(request)) throw new HttpError(421, 'invalid_host', 'Invalid Studio Host header')
         if (!validOrigin(request)) throw new HttpError(403, 'invalid_origin', 'Cross-origin Studio request rejected')
         const url = new URL(request.url || '/', `http://${host}:${boundPort}`)
+        if (configuration.basePath !== '/' && url.pathname === configuration.basePath.slice(0, -1)) {
+          secureHeaders(response, 'static')
+          response.writeHead(308, { Location: configuration.basePath + url.search }); response.end(); return
+        }
+        if (!url.pathname.startsWith(configuration.basePath)) throw new HttpError(404, 'not_found', 'Studio path not found')
+        url.pathname = '/' + url.pathname.slice(configuration.basePath.length)
         api = url.pathname === '/api' || url.pathname.startsWith('/api/')
-        if (api) {
+        if (api || configuration.embed) {
           const timeout = new Error('Studio request exceeded its overall deadline')
           // @ts-ignore custom code is inspected in the request error boundary.
           timeout.code = 'STUDIO_REQUEST_TIMEOUT'
@@ -1316,8 +1372,12 @@ export async function startStudioServer(options) {
         }
         secureHeaders(response, api ? 'api' : 'static')
         if (closing) throw new HttpError(503, 'studio_closing', 'Studio is closing')
-        if (api) await routeApi(request, response, url, requestController.signal)
-        else await routeStatic(request, response, url)
+        const access = configuration.embed ? await authenticateEmbed(configuration.embed, request, requestController.signal) : null
+        if (configuration.embed && !access) throw new HttpError(401, 'unauthorized', 'Sign in through the host application to open Studio')
+        await requestAccess.run(access, async () => {
+          if (api) await routeApi(request, response, url, requestController.signal)
+          else await routeStatic(request, response, url)
+        })
       } catch (error) {
         if (response.destroyed || response.headersSent || response.writableEnded) {
           if (!response.writableEnded) response.end()
@@ -1404,7 +1464,7 @@ export async function startStudioServer(options) {
     return closePromise
   }
 
-  const url = `http://${host}:${boundPort}/#token=${encodeURIComponent(token)}`
+  const url = configuration.embed ? `${configuration.embed.publicOrigin}${configuration.basePath}` : `http://${host}:${boundPort}${configuration.basePath}#token=${encodeURIComponent(token)}`
   return Object.freeze({
     url,
     host,

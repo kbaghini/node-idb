@@ -1,6 +1,7 @@
 // @ts-check
 
 import sqlite3 from 'sqlite3'
+import { cachedAll, closeStatementCache } from './statement-cache.js'
 import { commitWithCancellationBoundary, throwIfAborted } from './operation.js'
 
 /** @typedef {import('sqlite3').Database} Database */
@@ -75,19 +76,20 @@ export function get(database, sql, parameters = []) {
  * @returns {Promise<T[]>}
  */
 export function all(database, sql, parameters = []) {
-  return new Promise((resolve, reject) => {
+  return cachedAll(database, sql, parameters, () => new Promise((resolve, reject) => {
     database.all(sql, parameters, (error, rows) => {
       if (error) reject(error)
       else resolve(/** @type {T[]} */ (rows))
     })
-  })
+  }))
 }
 
 /**
  * @param {Database} database
  * @returns {Promise<void>}
  */
-export function closeDatabase(database) {
+export async function closeDatabase(database) {
+  await closeStatementCache(database)
   return new Promise((resolve, reject) => {
     database.close((error) => {
       if (error) reject(error)

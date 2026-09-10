@@ -1,0 +1,60 @@
+{
+  "node": "v24.11.1",
+  "platform": "win32",
+  "cpu": "13th Gen Intel(R) Core(TM) i9-13900H",
+  "storage": ":memory:",
+  "documents": 10000,
+  "reads": 1000,
+  "runs": [
+    {
+      "round": 0,
+      "mode": "native",
+      "ms": 88.663
+    },
+    {
+      "round": 0,
+      "mode": "cached",
+      "ms": 49.99359999999999
+    },
+    {
+      "round": 1,
+      "mode": "cached",
+      "ms": 50.002700000000004
+    },
+    {
+      "round": 1,
+      "mode": "native",
+      "ms": 82.62079999999997
+    },
+    {
+      "round": 2,
+      "mode": "native",
+      "ms": 82.00540000000001
+    },
+    {
+      "round": 2,
+      "mode": "cached",
+      "ms": 48.738099999999974
+    },
+    {
+      "round": 3,
+      "mode": "cached",
+      "ms": 50.687100000000044
+    },
+    {
+      "round": 3,
+      "mode": "native",
+      "ms": 80.06949999999995
+    },
+    {
+      "round": 4,
+      "mode": "native",
+      "ms": 78.75689999999997
+    },
+    {
+      "round": 4,
+      "mode": "cached",
+      "ms": 50.13510000000008
+    }
+  ]
+}

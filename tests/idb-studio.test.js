@@ -14,6 +14,48 @@ import { startStudio } from '../src/studio/index.js'
 
 const bearerPattern = /^Bearer\s+/i
 
+test('Studio cursor pages match offset pages in both orders and survive deleted anchors', async t => {
+  const fixture = await createFixture(t, 'node-idb-cursor-')
+  await writeDocuments(fixture.rootPath, 'products', Array.from({length: 7}, (_, i) => ({sku: `sku-${i}`})))
+  const studio = await fixture.start({maxRows: 3})
+  const state = await jsonResponse(await request(studio, '/api/state'))
+  const databaseId = databaseWithCollection(state, 'products').id
+  const page = async extra => {
+    const response = await request(studio, '/api/documents/list', {body: {databaseId, collection: 'products', limit: 3, ...extra}})
+    assert.equal(response.status, 200)
+    return jsonResponse(response)
+  }
+  for (const order of ['asc', 'desc']) {
+    let cursor = null
+    const collected = []
+    for (let offset = 0; offset < 7; offset += 3) {
+      const actual = await page({cursor, order})
+      const legacy = await page({offset, order})
+      assert.deepEqual(actual.documents, legacy.documents)
+      assert.equal(actual.total, null)
+      assert.equal(legacy.total, 7)
+      assert.equal(actual.hasMore, offset + 3 < 7)
+      collected.push(...actual.documents.map(row => row.objectId))
+      cursor = actual.nextCursor
+    }
+    assert.equal(cursor, null)
+    assert.equal(new Set(collected).size, 7)
+  }
+  const first = await page({cursor: null})
+  const writer = createIdb({storagePath: fixture.rootPath})
+  try { await writer.execute('DELETE FROM products WHERE object_id = ?', [first.nextCursor]) }
+  finally { await writer.close() }
+  const next = await page({cursor: first.nextCursor})
+  assert.ok(next.documents.every(row => row.objectId > first.nextCursor))
+  const empty = await page({cursor: Number.MAX_SAFE_INTEGER})
+  assert.deepEqual(empty.documents, [])
+  assert.equal(empty.hasMore, false)
+  for (const extra of [{cursor: null, offset: 0}, {cursor: -1}, {cursor: 1.5}, {cursor: '3'}, {cursor: {}}, {cursor: 0}]) {
+    const response = await request(studio, '/api/documents/list', {body: {databaseId, collection: 'products', ...extra}})
+    assert.equal(response.status, 400)
+  }
+})
+
 function encodeWire(value, seen = new WeakSet(), depth = 0) {
   if (depth > 128) throw new RangeError('Wire test value is too deeply nested')
   if (value === null) return ['null']

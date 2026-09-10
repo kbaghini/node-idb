@@ -445,11 +445,15 @@ The returned handle exposes `url`, `host`, the actual `port`, resolved
 | --- | --- | --- |
 | `rootPath` | Required | Trusted top-level directory. Relative paths resolve when `startStudio()` runs. |
 | `port` | `4177` | Local port from `0` through `65535`; `0` selects a currently free port. |
+| `basePath` | `/` | Mount prefix with leading and trailing slashes, such as `/admin/studio/`. |
+| `embed` | Disabled | Public origin, allowed frame parents, and application authentication; see [Embed mode](EMBED.md). |
 | `writable` | `false` | Enables dedicated insert, update, replace, delete, ANALYZE, and index-optimization endpoints. |
 | `maxRows` | `500` | Hard maximum for one query response or document page; configurable through `10_000`. |
 | `bodyLimitBytes` | `2 MiB` | Maximum JSON request body; configurable through `64 MiB`. |
 | `queryTimeoutMs` | `10_000` | Deadline applied to database work; configurable through ten minutes. |
 | `maxOpenCollections` | `16` | Retained collection connections per discovered database; maximum 10,000. |
+| `backupPath` | Disabled | Managed backup directory outside `rootPath`; enables snapshot creation, verification, and restoration into new databases. |
+| `maxTransferRows` | `10000` | Per-collection export/import/comparison cap, up to 100000; request byte limits also apply. |
 | `sqliteCache` | Core defaults | Main/blob page-cache budgets and main mapping limit; also supported in readonly mode. |
 
 Studio always binds to `127.0.0.1`. There is intentionally no remote bind
@@ -590,17 +594,17 @@ also exported from `node-idb/studio` for tests or custom local clients.
 
 ### Studio security and limitations
 
-The server combines loopback binding, a new 256-bit token per launch, strict
+By default, the server combines loopback binding, a new 256-bit token per launch, strict
 `Host` and browser `Origin` validation, same-origin fetches, no-store API
 responses, a restrictive Content Security Policy, bounded request bodies,
 server-side path selection, sanitized errors, and read-only-by-default engines.
 The UI builds DOM nodes with text content rather than injecting result HTML.
 
-These controls make Studio a safer local tool, not a multi-user administration
-service. Do not place it behind a reverse proxy, port forward, public hostname,
-tunnel, or container port publication. It has no accounts, roles, TLS
-termination, tenant isolation, user-level audit identities, or defense against
-a malicious process already running as the same operating-system user.
+Do not expose the default token-based mode through a reverse proxy, tunnel,
+or published port. To host it within an application, use [Embed mode](EMBED.md)
+with explicit authentication and per-user database grants. The host application
+provides accounts, permissions, TLS, and the reverse proxy. Neither mode protects
+against a malicious process running as the same operating-system user.
 
 Additional operational boundaries:
 
@@ -897,6 +901,30 @@ const database = createIdb({
 });
 ```
 
+#### Storefront SKU example
+
+For a storefront that looks products up by SKU, a minimal manual policy is:
+
+```js
+const database = createIdb({
+  storagePath: "./data/shop",
+  fieldIndexes: {
+    default: "none",
+    rules: [{ collection: "products", path: "sku", enabled: true }],
+  },
+});
+const products = await database.execute(
+  "SELECT name, price FROM products WHERE sku = ?", ["A-100"],
+);
+```
+
+This replaces adaptive indexing with the specified manual policy. Add other
+paths only for the application's actual filters, and use the same policy in
+every engine sharing this storage. A SKU index accelerates lookup; it does not
+enforce uniqueness. Separate category and price indexes are not a compound
+index. See the [10,000-product comparison](../benchmarks/results/2026-09-10-query-cache.md)
+for the measured read/write tradeoff.
+
 #### Persisted schema-v5 behavior
 
 The normalized policy and adaptive metadata are persisted inside every collection as schema-v5
@@ -926,6 +954,20 @@ faster overall: scans can dominate. Use the packaged benchmark and production-
 shaped load tests before changing the policy.
 
 ### `execute(statement, parameters?, options?)`
+
+Repeated exact SQL templates reuse a bounded syntax cache. Use parameters
+instead of interpolating values to benefit from it. The cache stores syntax
+only: current data, parameters, and schema are resolved on each execution.
+It retains up to 256 entries and 2 MiB of accounted SQL/serialized-tree text;
+runtime overhead is additional. Text over 16,384 UTF-16 code units is not cached.
+
+Eligible parameterized reads also reuse up to 32 prepared SQLite statements per
+connection. Small positional scalar bindings benefit; named, empty or large
+bindings retain the ordinary execution path. Concurrent use of the same SQL
+does not share an active statement. Handles are released on eviction, execution
+failure and connection close. Results remain fresh; this cache requires no API
+or storage-format change. See the
+[prepared-read measurements](../benchmarks/results/2026-09-10-prepared-reads.md).
 
 Returns the direct operation result and rejects on an error.
 
@@ -1447,6 +1489,30 @@ For example, if both `home.city` and `work.city` exist, `SELECT city` returns
 both keys. Use `SELECT home.city AS residence` for one stable output name.
 
 ## Stored and selected types
+
+For storefront lists, request the fields needed by each product card rather
+than loading long descriptions and specifications for every visible product:
+
+```js
+const cards = await database.execute(
+  "SELECT object_id, sku, name, price, thumbnail, stock FROM products ORDER BY object_id LIMIT ?",
+  [25],
+);
+// Load full details only when a product is opened.
+const [detail] = await database.execute(
+  "SELECT * FROM products WHERE sku = ?", [cards[0].sku],
+);
+```
+
+The detail query above assumes a nonempty list; handle empty lists in your app.
+Use [cursor pagination](../examples/17-cursor-pagination.js) for later pages and
+an index on SKU for detail lookups. The
+[complete card example](../examples/18-product-cards.js) and
+[measured comparison](../benchmarks/results/2026-09-10-product-projection.md)
+show this pattern without changing database behavior. Apply the same visibility
+and access filters to list and detail queries. Review the type table below when
+projecting booleans, dates or BigInt: scalar projections can have different
+representations from full document values.
 
 `SELECT *` reconstructs the logical document. Explicit scalar projections keep
 SQLite-compatible behavior, while direct objects and blob-backed payloads are

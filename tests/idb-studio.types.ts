@@ -6,7 +6,20 @@ import {
   type StudioOptions,
   type StudioState,
   type StudioWireValue,
+  type StudioEmbedOptions,
 } from 'node-idb/studio'
+
+const embedded: StudioEmbedOptions = {
+  publicOrigin: 'https://app.example.test',
+  allowedParents: ['https://app.example.test'],
+  async authenticate(request, { signal }) {
+    void request.headers.cookie
+    void signal.aborted
+    return { subject: 'verified-user', databases: ['demo'], writable: false }
+  },
+}
+const embedOptions: StudioOptions = { rootPath: './data', basePath: '/admin/studio/', embed: embedded }
+void embedOptions
 
 const options = {
   rootPath: './idbs',
@@ -17,6 +30,8 @@ const options = {
   queryTimeoutMs: 5_000,
   sqliteCache: { mainKiB: 1024, blobKiB: 512, mmapBytes: 0 },
   maxOpenCollections: 2,
+  backupPath: './backups',
+  maxTransferRows: 1000,
 } satisfies StudioOptions
 
 const wire: StudioWireValue = encodeStudioValue({

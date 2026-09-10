@@ -1,0 +1,78 @@
+{
+  "node": "v24.11.1",
+  "platform": "win32",
+  "cpu": "13th Gen Intel(R) Core(TM) i9-13900H",
+  "parseIterations": 200,
+  "parse": [
+    {
+      "round": 0,
+      "mode": "uncached",
+      "ms": 2808.9845
+    },
+    {
+      "round": 0,
+      "mode": "cached",
+      "ms": 1.2968999999998232
+    },
+    {
+      "round": 1,
+      "mode": "cached",
+      "ms": 1.085099999999784
+    },
+    {
+      "round": 1,
+      "mode": "uncached",
+      "ms": 2706.3423000000003
+    },
+    {
+      "round": 2,
+      "mode": "uncached",
+      "ms": 2736.1576999999997
+    },
+    {
+      "round": 2,
+      "mode": "cached",
+      "ms": 1.0012000000006083
+    }
+  ],
+  "documents": 10000,
+  "lookups": 200,
+  "indexes": [
+    {
+      "round": 0,
+      "mode": "none",
+      "insertMs": 441.9210000000003,
+      "lookupMs": 674.4596000000001
+    },
+    {
+      "round": 0,
+      "mode": "focused",
+      "insertMs": 384.9368999999988,
+      "lookupMs": 289.5562000000009
+    },
+    {
+      "round": 1,
+      "mode": "focused",
+      "insertMs": 378.16649999999936,
+      "lookupMs": 300.4246999999996
+    },
+    {
+      "round": 1,
+      "mode": "none",
+      "insertMs": 341.77839999999924,
+      "lookupMs": 621.6479999999992
+    },
+    {
+      "round": 2,
+      "mode": "none",
+      "insertMs": 347.27319999999963,
+      "lookupMs": 631.5720999999994
+    },
+    {
+      "round": 2,
+      "mode": "focused",
+      "insertMs": 386.3173000000006,
+      "lookupMs": 259.6461999999992
+    }
+  ]
+}

@@ -60,6 +60,26 @@ function harness() {
 
 const response = (payload) => ({ ok: true, headers: { get: () => 'application/json' }, json: async () => payload })
 
+test('Studio uses cursor history for next/previous and resets it when order or size changes', async () => {
+  const ui = harness()
+  const requests = []
+  ui.context.fetch = async (_url, options) => {
+    const body = JSON.parse(options.body)
+    requests.push(body)
+    return response({documents: [{objectId: 12, document: ['null']}], total: null, hasMore: true, nextCursor: body.cursor === null ? 12 : 24})
+  }
+  await ui.evaluate('loadDocuments()')
+  assert.equal(ui.evaluate('app.total'), null)
+  await ui.element('next-page').dispatch('click')
+  await ui.element('previous-page').dispatch('click')
+  await ui.element('next-page').dispatch('click')
+  ui.element('document-order').value = 'desc'
+  await ui.element('document-order').dispatch('change')
+  await ui.element('page-size').dispatch('change')
+  assert.deepEqual(requests.map(body => body.cursor), [null, 12, null, 12, null, null])
+  assert.ok(requests.every(body => !Object.hasOwn(body, 'offset')))
+})
+
 test('Studio Reload button applies the response rather than treating its click event as a selection version', async () => {
   const ui = harness()
   ui.context.fetch = async () => response({ documents: [{ objectId: 1, document: ['object', []] }], total: 1 })
@@ -67,6 +87,37 @@ test('Studio Reload button applies the response rather than treating its click e
   assert.equal(ui.evaluate('app.documents.length'), 1)
   assert.equal(ui.element('document-rows').textContent, 'loaded')
   assert.equal(ui.element('reload-documents').disabled, false)
+})
+
+test('Studio invalidates a pending import preview when its file or destination changes', async () => {
+  const ui = harness()
+  ui.evaluate(`app.state = {writable:true, limits:{bodyLimitBytes:2097152}};
+    toolElement('import-file').files = [{size:20, text:async()=> '[{"name":"sample"}]'}];
+    api = () => new Promise(resolve => { pendingPreview = resolve });`)
+  const pending = ui.element('preview-import').dispatch('click')
+  // Let file.text() resolve and start the API request.
+  await Promise.resolve()
+  await Promise.resolve()
+  ui.element('import-file').dispatch('change')
+  ui.evaluate(`pendingPreview({ticket:'obsolete', count:1, sha256:'test', sample:[]})`)
+  await pending
+  assert.equal(ui.evaluate('dataTools.preview'), null)
+  assert.equal(ui.element('apply-import').disabled, true)
+})
+
+test('Studio does not report a committed import as failed when a new file clears its review', async () => {
+  const ui = harness()
+  ui.evaluate(`app.state = {writable:true};
+    dataTools.preview = {ticket:'reviewed'}; dataTools.receipt = {applied:false};
+    toolElement('confirm-import').checked = true;
+    toast = (title) => { lastToast = title };
+    api = () => new Promise(resolve => { pendingImport = resolve });`)
+  const pending = ui.element('apply-import').dispatch('click')
+  ui.element('import-file').dispatch('change')
+  ui.evaluate(`pendingImport({inserted:1})`)
+  await pending
+  assert.equal(ui.evaluate('lastToast'), 'Import complete')
+  assert.equal(ui.evaluate('dataTools.preview'), null)
 })
 
 test('Studio cancels superseded document requests and ignores out-of-order responses', async () => {

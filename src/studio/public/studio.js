@@ -3,7 +3,9 @@
  * tagged wire nodes. Discovery and diagnostics metadata remain ordinary JSON.
  */
 
-const TOKEN_SESSION_KEY = "node-idb-studio-token";
+const STUDIO_BASE_PATH = document.querySelector?.('meta[name="studio-base-path"]')?.content || "/";
+const EMBED_MODE = document.body?.classList.contains("studio-embed") === true;
+const TOKEN_SESSION_KEY = `node-idb-studio-token:${STUDIO_BASE_PATH}`;
 const TYPE_ENVELOPE_KEY = "$nodeIdb";
 const KNOWN_WIRE_TAGS = new Set([
   "null",
@@ -110,6 +112,7 @@ const app = {
   documents: [],
   page: 0,
   hasMore: false,
+  pageCursors: [null],
   total: null,
   pendingDelete: null,
   editTarget: null,
@@ -135,13 +138,14 @@ function finishReadRequest(key, controller) {
 }
 
 function readLaunchToken() {
+  if (EMBED_MODE) return "";
   const params = new URLSearchParams(window.location.hash.slice(1));
   const fragmentToken = params.get("token") || "";
   let token = fragmentToken;
 
   try {
     if (fragmentToken) sessionStorage.setItem(TOKEN_SESSION_KEY, fragmentToken);
-    else token = sessionStorage.getItem(TOKEN_SESSION_KEY) || "";
+    else token = sessionStorage.getItem(TOKEN_SESSION_KEY) || (STUDIO_BASE_PATH === "/" ? sessionStorage.getItem("node-idb-studio-token") : "") || "";
   } catch {
     // Private browsing policies may disable session storage; this launch still works.
   }
@@ -223,11 +227,12 @@ function errorMessage(error) {
 async function api(path, { method = "GET", body, signal } = {}) {
   app.requestCount += 1;
   const headers = { Accept: "application/json" };
+  if (EMBED_MODE) headers["X-Node-Idb-Studio"] = "1";
   if (app.token) headers.Authorization = `Bearer ${app.token}`;
   if (body !== undefined) headers["Content-Type"] = "application/json";
 
   try {
-    const response = await fetch(path, {
+    const response = await fetch(STUDIO_BASE_PATH + path.replace(/^\//, ""), {
       method,
       headers,
       body: body === undefined ? undefined : JSON.stringify(body),
@@ -681,9 +686,9 @@ async function loadState({ preserveSelection = true } = {}) {
     renderConnectionState();
     renderNavigator();
     updateContext();
-    setConnection("connected", "Local Studio connected");
+    setConnection("connected", EMBED_MODE ? "Studio connected" : "Local Studio connected");
     if (app.selectedCollection) await selectCollection(app.selectedDatabaseId, app.selectedCollection, { updateNavigator: false });
-    else renderBrowseEmpty("No collection selected", "Choose a collection from the navigator.");
+    else { resetToolsReview(); renderBrowseEmpty("No collection selected", "Choose a collection from the navigator."); }
   } catch (error) {
     setConnection("error", "Connection failed");
     const message = error.status === 401 && !app.token
@@ -721,6 +726,7 @@ async function selectCollection(databaseId, collectionName, { updateNavigator = 
   const selectionVersion = ++app.selectionVersion;
   app.selectedDatabaseId = databaseId;
   app.selectedCollection = collectionName;
+  resetToolsReview();
   app.openDatabases.add(databaseId);
   app.page = 0;
   app.schema = null;
@@ -764,7 +770,8 @@ function normalizeDocumentList(payload) {
   });
   return {
     documents,
-    total: Number.isFinite(Number(raw.total)) ? Number(raw.total) : null,
+    total: raw.total != null && Number.isFinite(Number(raw.total)) ? Number(raw.total) : null,
+    nextCursor: raw.nextCursor ?? null,
     hasMore: typeof raw.hasMore === "boolean" ? raw.hasMore : documents.length >= Number(elements["page-size"].value),
   };
 }
@@ -775,16 +782,19 @@ async function loadDocuments(expectedSelectionVersion = app.selectionVersion) {
     return;
   }
   const pageSize = Number(elements["page-size"].value);
+  if (app.page === 0) app.pageCursors = [null];
   const body = {
     databaseId: app.selectedDatabaseId,
     collection: app.selectedCollection,
     limit: pageSize,
-    offset: app.page * pageSize,
+    cursor: app.pageCursors[app.page] ?? null,
     order: elements["document-order"].value,
   };
   const requestVersion = ++app.documentRequestVersion;
   const controller = beginReadRequest("documents");
   elements["reload-documents"].disabled = true;
+  elements["next-page"].disabled = true;
+  elements["previous-page"].disabled = true;
   elements["document-table"].hidden = false;
   elements["browse-empty"].hidden = true;
   elements["document-rows"].replaceChildren(
@@ -798,12 +808,18 @@ async function loadDocuments(expectedSelectionVersion = app.selectionVersion) {
     app.documents = result.documents;
     app.total = result.total;
     app.hasMore = result.hasMore;
+    app.pageCursors.length = app.page + 1;
+    if (result.hasMore) app.pageCursors.push(result.nextCursor);
     renderDocuments();
   } catch (error) {
     if (controller.signal.aborted) return;
     if (expectedSelectionVersion !== app.selectionVersion || requestVersion !== app.documentRequestVersion) return;
     app.documents = [];
     renderBrowseEmpty("Documents could not be loaded", errorMessage(error));
+    if (app.page > 0) {
+      elements.pagination.hidden = false;
+      elements["previous-page"].disabled = false;
+    }
     toast("Browse failed", errorMessage(error), "error");
   } finally {
     finishReadRequest("documents", controller);
@@ -1386,6 +1402,7 @@ function activatePanel(panelId) {
     const active = tab.dataset.panel === panelId;
     tab.classList.toggle("is-active", active);
     tab.setAttribute("aria-selected", String(active));
+    tab.tabIndex = active ? 0 : -1;
   }
   for (const panel of document.querySelectorAll(".tab-panel")) {
     const active = panel.id === panelId;
@@ -1397,6 +1414,7 @@ function activatePanel(panelId) {
     loadSchema(app.selectionVersion, { details: true });
   }
   if (panelId === "diagnostics-panel" && app.selectedDatabaseId && !app.diagnostics) loadDiagnostics();
+  if (panelId === "tools-panel") renderTools();
 }
 
 function selectedWriteOperation() {
@@ -1673,7 +1691,181 @@ async function runMaintenance(endpoint, button, label) {
   }
 }
 
+const dataTools = { preview: null, receipt: null, busy: false, reviewVersion: 0 };
+const toolElement = id => document.getElementById(id);
+
+function resetToolsReview() {
+  dataTools.reviewVersion++;
+  dataTools.preview = null;
+  dataTools.receipt = null;
+  toolElement("confirm-import").checked = false;
+  toolElement("confirm-restore").checked = false;
+  toolElement("apply-import").disabled = true;
+  toolElement("download-review").disabled = true;
+  toolElement("import-review").replaceChildren();
+  toolElement("comparison-results").replaceChildren();
+  toolElement("tools-status").textContent = "";
+  renderTools();
+}
+
+function renderTools() {
+  const database = app.databases.find(item => item.id === app.selectedDatabaseId);
+  toolElement("tools-context").textContent = database && app.selectedCollection
+    ? `Selected: ${database.name} / ${app.selectedCollection}` : "Select a collection to get started.";
+  const select = toolElement("compare-target"), previous = select.value;
+  select.replaceChildren();
+  for (const db of app.databases) for (const collection of db.collections || []) {
+    select.append(createElement("option", { value: JSON.stringify([db.id, collection.name]), text: `${db.name} / ${collection.name}` }));
+  }
+  if ([...select.options || []].some(option => option.value === previous)) select.value = previous;
+  const backups = Boolean(app.state?.backupsEnabled);
+  for (const id of ["create-backup", "list-backups", "verify-backup"]) toolElement(id).disabled = !backups || dataTools.busy;
+  toolElement("backup-help").textContent = backups
+    ? "Snapshots cover the selected database. Verification checks file hashes and SQLite integrity. Restore creates a new database."
+    : app.state?.embed ? "Backups are managed by your application operator outside embedded Studio."
+    : "Backups are disabled. Set backupPath to a folder outside rootPath in your Studio launcher.";
+  toolElement("apply-import").disabled = dataTools.busy || !app.state?.writable || !dataTools.preview || !toolElement("confirm-import").checked;
+  toolElement("import-mode-hint").textContent = app.state?.writable
+    ? "Existing documents stay intact. A fresh preview is required for each import."
+    : app.state?.embed ? "Read-only access: you can preview and export. Ask your administrator for write access."
+    : "Read-only session: you can preview and export. Restart with writable mode to import.";
+  toolElement("restore-backup").disabled = dataTools.busy || !backups || !app.state?.writable || !toolElement("confirm-restore").checked || !toolElement("backup-list").value;
+}
+
+function downloadData(filename, data) {
+  const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }));
+  const link = createElement("a", { href: url, download: filename });
+  document.body.append(link); link.click(); link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+async function toolAction(buttonId, action) {
+  if (dataTools.busy) return;
+  dataTools.busy = true;
+  const button = toolElement(buttonId);
+  setButtonBusy(button, true, "Working…");
+  toolElement("tools-status").textContent = "Working…";
+  const selection = { databaseId: app.selectedDatabaseId, collection: app.selectedCollection };
+  const version = app.selectionVersion;
+  try {
+    await action(selection, () => version === app.selectionVersion);
+    if (version === app.selectionVersion) toolElement("tools-status").textContent = "Done.";
+  } catch (error) {
+    toolElement("tools-status").textContent = errorMessage(error);
+    toast("Data tools", errorMessage(error), "error");
+  } finally {
+    dataTools.busy = false;
+    setButtonBusy(button, false);
+    renderTools();
+  }
+}
+
+const workspaceApi = (action, body) => api(`/api/workspace/${action}`, { method: "POST", body });
+
+function renderToolDocument(label, node, parent) {
+  const detail = createElement("details", { className: "tools-detail" }, [createElement("summary", { text: label })]);
+  detail.addEventListener("toggle", () => {
+    if (!detail.open || detail.dataset.loaded) return;
+    detail.dataset.loaded = "yes";
+    detail.append(createElement("pre", { text: JSON.stringify(wireToFriendly(node), null, 2) }));
+  });
+  parent.append(detail);
+}
+
+async function refreshBackupList() {
+  const result = await workspaceApi("backups", {});
+  const select = toolElement("backup-list"), previous = select.value;
+  select.replaceChildren(...result.backups.map(item => createElement("option", { value: item.id, text: `${new Date(item.createdAt).toLocaleString()} · ${item.id.slice(-8)}` })));
+  if (result.backups.some(item => item.id === previous)) select.value = previous;
+  renderTools();
+}
+
+function attachToolEvents() {
+  toolElement("export-package").addEventListener("click", () => toolAction("export-package", async selection => {
+    const bundle = await workspaceApi("export", selection);
+    bundle.reviewNote = toolElement("package-note").value;
+    downloadData(`${selection.collection}-package.json`, bundle);
+  }));
+  toolElement("import-file").addEventListener("change", resetToolsReview);
+  toolElement("confirm-import").addEventListener("change", renderTools);
+  toolElement("confirm-restore").addEventListener("change", renderTools);
+  toolElement("backup-list").addEventListener("change", () => { toolElement("confirm-restore").checked = false; renderTools(); });
+  toolElement("preview-import").addEventListener("click", () => toolAction("preview-import", async (selection, current) => {
+    resetToolsReview();
+    const reviewVersion = dataTools.reviewVersion;
+    const file = toolElement("import-file").files?.[0];
+    if (!file) throw new Error("Choose a data file first.");
+    if (file.size > app.state.limits.bodyLimitBytes - 4096) throw new Error("File exceeds the Studio request limit.");
+    let bundle = JSON.parse(await file.text());
+    if (Array.isArray(bundle)) bundle = { format: "node-idb-transfer", version: 1, documents: bundle.map(document => friendlyToWire(document)) };
+    const preview = await workspaceApi("preview-import", { ...selection, bundle });
+    if (!current() || reviewVersion !== dataTools.reviewVersion) return;
+    dataTools.preview = { ...preview, ...selection };
+    dataTools.receipt = { format: "node-idb-review", version: 1, packageSha256: preview.sha256,
+      reviewedAt: new Date().toISOString(), destination: toolElement("tools-context").textContent, documents: preview.count, applied: false };
+    const panel = toolElement("import-review");
+    panel.append(createElement("p", { text: `Append ${preview.count} document${preview.count === 1 ? "" : "s"} to ${toolElement("tools-context").textContent.replace("Selected: ", "")}. Preview expires in 10 minutes. Showing up to 3 samples.` }));
+    if (typeof bundle.reviewNote === "string") panel.append(createElement("p", { text: bundle.reviewNote.slice(0, 2000) }));
+    panel.append(createElement("p", { text: `Package fingerprint: ${preview.sha256}`, className: "tools-hint" }));
+    preview.sample.forEach((node, index) => renderToolDocument(`Sample ${index + 1}`, node, panel));
+    toolElement("download-review").disabled = false;
+  }));
+  toolElement("download-review").addEventListener("click", () => {
+    if (dataTools.receipt) downloadData("node-idb-review.json", dataTools.receipt);
+  });
+  toolElement("apply-import").addEventListener("click", () => toolAction("apply-import", async (selection, current) => {
+    const preview = dataTools.preview;
+    const receipt = dataTools.receipt;
+    if (!preview || !toolElement("confirm-import").checked) throw new Error("Preview and confirm the file first.");
+    dataTools.preview = null;
+    const result = await workspaceApi("apply-import", { ...selection, ticket: preview.ticket, confirm: true });
+    if (!current() || receipt !== dataTools.receipt) { toast("Import complete", `${result.inserted} documents appended to ${selection.collection}.`); return; }
+    receipt.applied = true;
+    toolElement("import-review").append(createElement("p", { text: `${result.inserted} document${result.inserted === 1 ? "" : "s"} appended successfully.` }));
+    toolElement("confirm-import").checked = false;
+    await loadDocuments();
+  }));
+  toolElement("compare-collections").addEventListener("click", () => toolAction("compare-collections", async (selection, current) => {
+    const [targetDatabaseId, targetCollection] = JSON.parse(toolElement("compare-target").value || "[]");
+    const result = await workspaceApi("compare", { ...selection, targetDatabaseId, targetCollection, keyPath: toolElement("compare-key").value.trim() });
+    if (!current()) return;
+    const panel = toolElement("comparison-results"); panel.replaceChildren();
+    panel.append(createElement("p", { text: Object.entries(result.counts).map(([key, value]) => `${value} ${key}`).join(" · ") }));
+    if (result.truncated) panel.append(createElement("p", { text: "Showing the first 100 differences; counts cover all documents." }));
+    for (const item of result.differences) {
+      const label = `${item.kind}: ${wirePreview(item.key)}`;
+      if (item.before) renderToolDocument(`${label} — before`, item.before, panel);
+      if (item.after) renderToolDocument(`${label} — after`, item.after, panel);
+    }
+  }));
+  toolElement("list-backups").addEventListener("click", () => toolAction("list-backups", refreshBackupList));
+  toolElement("create-backup").addEventListener("click", () => toolAction("create-backup", async selection => {
+    const result = await workspaceApi("backup", { databaseId: selection.databaseId });
+    await refreshBackupList(); toolElement("backup-list").value = result.id;
+    toolElement("backup-result").textContent = `Created ${result.createdAt}: ${result.collections.join(", ")}`;
+  }));
+  toolElement("verify-backup").addEventListener("click", () => toolAction("verify-backup", async () => {
+    const result = await workspaceApi("verify-backup", { id: toolElement("backup-list").value });
+    toolElement("backup-result").textContent = `Verified snapshot from ${result.createdAt}. Collections: ${result.collections.join(", ")}`;
+  }));
+  toolElement("restore-backup").addEventListener("click", () => toolAction("restore-backup", async () => {
+    if (!toolElement("confirm-restore").checked) throw new Error("Confirm restoration first.");
+    const result = await workspaceApi("restore-backup", { id: toolElement("backup-list").value, confirm: true });
+    toolElement("confirm-restore").checked = false;
+    toolElement("backup-result").textContent = `Restored as ${result.database}. Select it in the navigator.`;
+    await loadState({ preserveSelection: true });
+  }));
+}
+
 function attachEvents() {
+  attachToolEvents();
+  document.getElementById("navigator-toggle").addEventListener("click", (event) => {
+    const button = event.currentTarget;
+    const expanded = button.getAttribute("aria-expanded") !== "true";
+    button.setAttribute("aria-expanded", String(expanded));
+    button.textContent = expanded ? "Hide" : "Show";
+    document.querySelector(".navigator").classList.toggle("is-collapsed", !expanded);
+  });
   elements["refresh-button"].addEventListener("click", refreshDiscovery);
   elements["navigator-filter"].addEventListener("input", renderNavigator);
   elements["reload-documents"].addEventListener("click", () => loadDocuments());
@@ -1682,26 +1874,38 @@ function attachEvents() {
   elements["structure-list-mode"].addEventListener("click", () => setStructureView("list"));
   elements["page-size"].addEventListener("change", () => {
     app.page = 0;
-    loadDocuments();
+    return loadDocuments();
   });
   elements["document-order"].addEventListener("change", () => {
     app.page = 0;
-    loadDocuments();
+    return loadDocuments();
   });
   elements["previous-page"].addEventListener("click", () => {
     if (app.page > 0) {
       app.page -= 1;
-      loadDocuments();
+      return loadDocuments();
     }
   });
   elements["next-page"].addEventListener("click", () => {
     if (app.hasMore) {
       app.page += 1;
-      loadDocuments();
+      return loadDocuments();
     }
   });
 
-  for (const tab of document.querySelectorAll(".tab")) tab.addEventListener("click", () => activatePanel(tab.dataset.panel));
+  for (const tab of document.querySelectorAll(".tab")) {
+    tab.addEventListener("click", () => activatePanel(tab.dataset.panel));
+    tab.addEventListener("keydown", (event) => {
+      if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+      const tabs = [...document.querySelectorAll(".tab")].filter(item => !item.hidden);
+      const index = tabs.indexOf(tab);
+      const next = event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1
+        : (index + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
+      event.preventDefault();
+      activatePanel(tabs[next].dataset.panel);
+      tabs[next].focus();
+    });
+  }
   elements["parameters-help"].addEventListener("click", () => {
     const show = elements["parameters-guide"].hidden;
     elements["parameters-guide"].hidden = !show;

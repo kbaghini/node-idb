@@ -1,4 +1,27 @@
 import type { SqliteCacheOptions } from '../idb/index.js';
+import type { IncomingMessage } from 'node:http';
+
+export interface StudioAccess {
+  /** Stable user/session identity, obtained from verified server-side authentication. */
+  subject: string;
+  /** Exact immediate directory names beneath rootPath. Use '.' for the root database. */
+  databases: readonly string[];
+  /** May enable writes only if the Studio instance also has writable: true. */
+  writable?: boolean;
+}
+
+export interface StudioEmbedOptions {
+  /** Browser-facing exact HTTPS origin; HTTP localhost is allowed for development. */
+  publicOrigin: string;
+  /** Exact origins allowed to frame Studio; wildcards are not accepted. */
+  allowedParents: readonly [string, ...string[]];
+  /** Verify a host-app session on every request. Return null to deny access. */
+  authenticate(request: IncomingMessage, context: { signal: AbortSignal }): StudioAccess | null | Promise<StudioAccess | null>;
+  /** Hide the standalone header; defaults to true. */
+  hideHeader?: boolean;
+  /** Hide the navigator; this is cosmetic and never grants/restricts access. */
+  hideNavigator?: boolean;
+}
 
 export interface StudioCodecLimits {
   maxDepth?: number;
@@ -33,6 +56,14 @@ export function decodeStudioValue(
 ): unknown;
 
 export interface StudioOptions {
+  /** Mount prefix with leading and trailing slashes. Default '/'. */
+  basePath?: string;
+  /** Opt-in iframe mode using host-app authentication instead of the launch token. */
+  embed?: StudioEmbedOptions | false;
+  /** Managed backup directory outside rootPath. Omit to disable backup actions. */
+  backupPath?: string;
+  /** Transfer/comparison document cap per collection. Default 10000, maximum 100000. */
+  maxTransferRows?: number;
   /** Connection-local page-cache and mapping settings for each opened database. */
   sqliteCache?: SqliteCacheOptions;
   /** Retained collection connections per database. Default: 16; maximum: 10000. */
@@ -68,6 +99,8 @@ export interface StudioDatabaseState {
 }
 
 export interface StudioState {
+  readonly embed: boolean;
+  readonly backupsEnabled: boolean;
   readonly version: string;
   readonly writable: boolean;
   readonly rootPath: string;
@@ -76,6 +109,7 @@ export interface StudioState {
   readonly discovery: "root-and-immediate-children";
   readonly limits: Readonly<{
     maxRows: number;
+    maxTransferRows: number;
     bodyLimitBytes: number;
     maxResponseBytes: number;
     queryTimeoutMs: number;
@@ -85,7 +119,7 @@ export interface StudioState {
 }
 
 export interface StudioHandle {
-  /** Launch URL. The random bearer token is carried only in its URL fragment. */
+  /** Local launch URL with a fragment token, or the public URL in embed mode. */
   readonly url: string;
   readonly host: "127.0.0.1";
   readonly port: number;

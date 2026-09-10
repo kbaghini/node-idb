@@ -1,6 +1,7 @@
 // @ts-check
 
 import sqliteParser from 'sqlite-parser'
+import { createParseCache } from './parse-cache.js'
 
 import { ValueType, decodeValue, deepClone } from './codec.js'
 import { indexedValueExpression, valueTable } from './collection.js'
@@ -80,7 +81,7 @@ function preprocess(sql) {
  * @param {string} sql
  * @returns {Promise<any>}
  */
-export function parseSql(sql) {
+function parseUncachedSql(sql) {
   return new Promise((resolve, reject) => {
     sqliteParser(preprocess(sql), (error, ast) => {
       if (error) reject(error)
@@ -89,6 +90,8 @@ export function parseSql(sql) {
     })
   })
 }
+
+export const parseSql = createParseCache(parseUncachedSql)
 
 /**
  * sqlite-parser does not retain the case of unquoted aliases. Capture SELECT

@@ -6,8 +6,9 @@
     <meta name="color-scheme" content="dark" />
     <meta name="description" content="A local management studio for node-idb databases." />
     <title>node-idb Studio</title>
-    <link rel="stylesheet" href="/studio.css" />
-    <script src="/studio.js" type="module"></script>
+    <meta content="/" name="studio-base-path" />
+    <link rel="stylesheet" href="./studio.css" />
+    <script src="./studio.js" type="module"></script>
   </head>
   <body>
     <a class="skip-link" href="#workspace">Skip to workspace</a>
@@ -44,12 +45,13 @@
             <h1>Databases</h1>
           </div>
           <span class="count-badge" id="database-count">0</span>
+          <button class="text-button navigator-toggle" id="navigator-toggle" type="button" aria-expanded="true" aria-controls="navigator-tree">Hide</button>
         </div>
 
         <label class="search-field">
           <span class="sr-only">Filter databases and collections</span>
           <span aria-hidden="true">⌕</span>
-          <input id="navigator-filter" type="search" placeholder="Filter navigator" autocomplete="off" />
+          <input id="navigator-filter" type="search" placeholder="Find a database or collection" autocomplete="off" />
           <kbd>/</kbd>
         </label>
 
@@ -61,7 +63,7 @@
 
         <div class="navigator-footnote">
           <span aria-hidden="true">●</span>
-          Root and immediate child folders
+          Stored on this device
         </div>
       </aside>
 
@@ -74,21 +76,12 @@
         </div>
 
         <nav class="tabs" aria-label="Studio areas" role="tablist">
-          <button class="tab is-active" id="browse-tab" type="button" role="tab" aria-controls="browse-panel" aria-selected="true" data-panel="browse-panel">
-            Browse
-          </button>
-          <button class="tab" id="structure-tab" type="button" role="tab" aria-controls="structure-panel" aria-selected="false" data-panel="structure-panel">
-            Structure
-          </button>
-          <button class="tab" id="query-tab" type="button" role="tab" aria-controls="query-panel" aria-selected="false" data-panel="query-panel">
-            Query
-          </button>
-          <button class="tab write-only" id="write-tab" type="button" role="tab" aria-controls="write-panel" aria-selected="false" data-panel="write-panel" hidden>
-            Write
-          </button>
-          <button class="tab" id="diagnostics-tab" type="button" role="tab" aria-controls="diagnostics-panel" aria-selected="false" data-panel="diagnostics-panel">
-            Diagnostics
-          </button>
+          <button class="tab is-active" id="browse-tab" type="button" tabindex="0" role="tab" aria-controls="browse-panel" aria-selected="true" data-panel="browse-panel"><svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z" /></svg><span>Browse</span></button>
+          <button class="tab" id="structure-tab" type="button" tabindex="-1" role="tab" aria-controls="structure-panel" aria-selected="false" data-panel="structure-panel"><svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h6v5H9z M3 16h6v5H3z M15 16h6v5h-6z M12 8v4 M6 16v-4h12v4" /></svg><span>Structure</span></button>
+          <button class="tab" id="query-tab" type="button" tabindex="-1" role="tab" aria-controls="query-panel" aria-selected="false" data-panel="query-panel"><svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m8 6-6 6 6 6 M14 18h8" /></svg><span>Query</span></button>
+          <button class="tab write-only" id="write-tab" type="button" tabindex="-1" role="tab" aria-controls="write-panel" aria-selected="false" data-panel="write-panel" hidden><svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m4 16-1 5 5-1L20 8l-4-4L4 16z M14 6l4 4" /></svg><span>Write</span></button>
+          <button class="tab" id="diagnostics-tab" type="button" tabindex="-1" role="tab" aria-controls="diagnostics-panel" aria-selected="false" data-panel="diagnostics-panel"><svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h4l3-8 4 16 3-8h4" /></svg><span>Diagnostics</span></button>
+          <button class="tab" id="tools-tab" type="button" tabindex="-1" role="tab" aria-controls="tools-panel" aria-selected="false" data-panel="tools-panel"><svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16 M4 12h16 M4 19h16 M8 3v4 M16 10v4 M10 17v4" /></svg><span>Data tools</span></button>
         </nav>
 
         <section class="tab-panel is-active" id="browse-panel" role="tabpanel" aria-labelledby="browse-tab">
@@ -357,6 +350,51 @@
               </div>
             </aside>
           </div>
+        </section>
+
+        <section class="tab-panel" id="tools-panel" role="tabpanel" aria-labelledby="tools-tab" hidden>
+          <div class="diagnostics-header"><div><p class="eyebrow">Data workspace</p><h2>Transfer, compare &amp; recover</h2><p id="tools-context">Select a collection to get started.</p></div></div>
+          <div class="tools-grid">
+            <section class="tools-card">
+              <h3><span class="tool-symbol"><svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V3 m-4 4 4-4 4 4 M4 14v6h16v-6" /></svg></span>Share a data package</h3>
+              <p>Export the selected collection with native types intact. Add a note for the person reviewing it.</p>
+              <label for="package-note">Review note <span class="optional-label">Optional</span></label>
+              <textarea id="package-note" rows="2" maxlength="2000" placeholder="What should the reviewer check?"></textarea>
+              <button class="button button-secondary" id="export-package" type="button">Download package</button>
+              <p class="tools-hint">Contains document data. Share the file only with its intended recipients.</p>
+            </section>
+            <section class="tools-card">
+              <h3><span class="tool-symbol"><svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v13 m-4-4 4 4 4-4 M4 17v4h16v-4" /></svg></span>Review &amp; import</h3>
+              <p>Choose a file, review its contents, then confirm the import.</p>
+              <label for="import-file">Data file</label><input id="import-file" type="file" accept=".json,application/json" />
+              <button class="button button-secondary" id="preview-import" type="button">Preview file</button>
+              <div id="import-review" aria-live="polite"></div>
+              <label class="tools-check"><input id="confirm-import" type="checkbox" /> I reviewed the destination and new documents.</label>
+              <button class="button button-primary" id="apply-import" type="button" disabled>Append documents</button>
+              <button class="button button-subtle" id="download-review" type="button" disabled>Download review receipt</button>
+              <p class="tools-hint" id="import-mode-hint">Existing documents stay intact. A fresh preview is required for each import.</p>
+            </section>
+            <section class="tools-card">
+              <h3><span class="tool-symbol"><svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3v18 M16 3v18 M3 7h5 M16 7h5 M3 17h5 M16 17h5 M8 12h8" /></svg></span>Compare collections</h3>
+              <p>Compare the selected collection against another one using a unique field in each document.</p>
+              <label for="compare-target">Compare against</label><select id="compare-target"></select>
+              <label for="compare-key">Unique field path</label><input id="compare-key" placeholder="sku or contact.email" />
+              <button class="button button-secondary" id="compare-collections" type="button">Compare data</button>
+              <div id="comparison-results" aria-live="polite"></div>
+              <p class="tools-hint">Added and removed are relative to the selected collection. Each collection is read as a separate snapshot.</p>
+            </section>
+            <section class="tools-card">
+              <h3><span class="tool-symbol"><svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 3 7v5c0 5 9 9 9 9s9-4 9-9V7l-9-4z m-4 9 3 3 5-6" /></svg></span>Backups &amp; recovery</h3>
+              <p id="backup-help">Configure a backup folder in the Studio launcher to enable managed snapshots.</p>
+              <div class="toolbar-actions"><button class="button button-secondary" id="create-backup" type="button">Back up database</button><button class="button button-subtle" id="list-backups" type="button">Refresh backups</button></div>
+              <label for="backup-list">Managed snapshot</label><select id="backup-list"></select>
+              <button class="button button-secondary" id="verify-backup" type="button">Verify integrity</button>
+              <label class="tools-check"><input id="confirm-restore" type="checkbox" /> Restore this snapshot into a new database.</label>
+              <button class="button button-primary" id="restore-backup" type="button" disabled>Restore as new database</button>
+              <div id="backup-result" aria-live="polite"></div>
+            </section>
+          </div>
+          <p id="tools-status" role="status" aria-live="polite"></p>
         </section>
 
         <section class="tab-panel" id="diagnostics-panel" role="tabpanel" aria-labelledby="diagnostics-tab" hidden>

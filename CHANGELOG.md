@@ -6,6 +6,35 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-10
+
+### Changed
+
+- Studio Browse now uses object-ID cursor pagination and one-row lookahead
+  without counting the entire collection on each page; offset requests remain supported.
+
+- Reuse up to 32 prepared parameterized read statements per SQLite connection;
+  busy statements use the ordinary path and cached handles are finalized on close.
+
+- Cache parsed SQL syntax with a 256-entry LRU and a 2 MiB retained-text
+  budget; callers receive independent syntax trees and query results stay fresh.
+
+- Refreshed Studio with clearer typography, consistent cards and controls,
+  illustrated navigation, keyboard tab navigation, and a collapsible mobile
+  database navigator with tabs that fit without horizontal scrolling.
+
+### Added
+
+- Product-card projection example and repeatable full-document comparison with
+  read/serialization timings and raw/compressed JSON sizes.
+
+- Opt-in Studio embedding with configurable mount paths and exact frame origins,
+  host-app authentication, per-request database/write grants, and an iframe demo.
+- Studio Data tools: typed collection exports, reviewed atomic batch imports,
+  unique-key collection comparisons, and shareable local review receipts.
+- Opt-in managed Studio backups with integrity verification and restoration
+  into new databases; added `backupPath` and `maxTransferRows` launcher options.
+
 ## [0.4.0] - 2026-09-07
 
 ### Fixed
