@@ -6,6 +6,14 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-09-10
+
+### Changed
+
+- Refreshed the npm README with a minimal SVG hero, clearer Studio overview,
+  embedding guidance and storefront examples.
+- Verify the exact npm version and latest tag when publishing a release.
+
 ## [0.5.0] - 2026-09-10
 
 ### Changed
