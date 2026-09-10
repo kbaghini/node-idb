@@ -67,11 +67,29 @@ jobs:
         run: |
           NAME="$(node -p "require('./package.json').name")"
           VERSION="$(node -p "require('./package.json').version")"
-          if npm view "$NAME@$VERSION" version >/dev/null 2>&1; then
+          EXISTING="$(npm view "$NAME@$VERSION" version --prefer-online 2>/dev/null || true)"
+          if [ "$EXISTING" = "$VERSION" ]; then
             echo "$NAME@$VERSION is already published."
           else
-            npm publish --access public --provenance
+            npm publish --access public --provenance --tag latest
           fi
+
+      - name: Verify npm publication
+        shell: bash
+        run: |
+          NAME="$(node -p "require('./package.json').name")"
+          VERSION="$(node -p "require('./package.json').version")"
+          for ATTEMPT in 1 2 3 4 5 6; do
+            PUBLISHED="$(npm view "$NAME@$VERSION" version --prefer-online 2>/dev/null || true)"
+            LATEST="$(npm view "$NAME" dist-tags.latest --prefer-online 2>/dev/null || true)"
+            if [ "$PUBLISHED" = "$VERSION" ] && [ "$LATEST" = "$VERSION" ]; then
+              echo "Verified $NAME@$VERSION on npm with the latest tag."
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "npm did not confirm the requested version and latest tag."
+          exit 1
 
       - name: Create GitHub Release
         env:
